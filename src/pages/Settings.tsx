@@ -11,7 +11,7 @@ import { formatNetDiag, shortVerdict } from "../netDiagReport";
 import { copyText } from "../clipboard";
 import { IBack, IBoltF, IBroom, IChevR, IHeart, IInfo, ILink, ILockF, IMoon, IRefresh, ISun, IVolMute } from "../icons";
 import { authenticate, checkStatus } from "@tauri-apps/plugin-biometric";
-import { activeTVBoxSource, importTVBoxSources, loadTVBoxSources, removeTVBoxSource, selectTVBoxSource, type TVBoxSource } from "../tvbox";
+import { activeTVBoxSource, importTVBoxSources, loadTVBoxSources, removeTVBoxSource, selectTVBoxSource, type TVBoxRepository, type TVBoxSource } from "../tvbox";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return <>
@@ -45,6 +45,9 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
   const [tvboxName, setTVBoxName] = useState("");
   const [tvboxUrl, setTVBoxUrl] = useState("");
   const [tvboxImporting, setTVBoxImporting] = useState(false);
+  const [tvboxRepositories, setTVBoxRepositories] = useState<TVBoxRepository[]>([]);
+  const [tvboxRepositoryUrl, setTVBoxRepositoryUrl] = useState("");
+  const [tvboxImportError, setTVBoxImportError] = useState("");
 
   useEffect(() => { void initPlaybackLog(); }, []);
 
@@ -115,21 +118,33 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
       setAppLockPending(false);
     }
   };
-  const importTVBoxSource = async () => {
-    if (!tvboxUrl.trim() || tvboxImporting) return;
+  const importTVBoxSource = async (rawUrl = tvboxUrl, sourceName = tvboxName) => {
+    if (!rawUrl.trim() || tvboxImporting) return;
     setTVBoxImporting(true);
+    setTVBoxImportError("");
     try {
-      const result = await importTVBoxSources(tvboxUrl, tvboxName);
+      const result = await importTVBoxSources(rawUrl, sourceName);
+      if (result.repositories?.length) {
+        setTVBoxRepositories(result.repositories);
+        setTVBoxRepositoryUrl(rawUrl);
+        toast(`检测到 ${result.repositories.length} 个子配置，请选择后导入`, "info");
+        return;
+      }
+      if (result.sources[0]) selectTVBoxSource(result.sources[0].id);
       const allSources = loadTVBoxSources();
       setTVBoxSources(allSources);
       const current = activeTVBoxSource();
       setActiveTVBoxId(current?.id ?? "");
       setTVBoxUrl("");
       setTVBoxName("");
-      toast(`已添加 ${result.sources.length} 个 JSON API 源${result.spiderSkipped ? `，跳过 ${result.spiderSkipped} 个 Spider 源` : ""}`, "ok");
+      setTVBoxRepositories([]);
+      setTVBoxRepositoryUrl("");
+      toast(`已添加 ${result.sources.length} 个 JSON API 源${result.spiderSkipped ? `，跳过 ${result.spiderSkipped} 个脚本/非 JSON 源` : ""}`, "ok");
       setTab("tvbox");
     } catch (error) {
-      toast((error as Error).message || "导入 TVBox 源失败", "info");
+      const message = error instanceof Error ? error.message : typeof error === "string" ? error : "导入 TVBox 源失败";
+      setTVBoxImportError(message);
+      toast(message, "info");
     } finally {
       setTVBoxImporting(false);
     }
@@ -196,17 +211,33 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
 
           <Section title="TVBox JSON/API 源">
             <div className="px-3.5 pt-3 text-[12px] text-mut leading-relaxed">
-              添加标准 JSON API 地址，或导入 TVBox 配置 JSON。仅直接 HTTP(S) 媒体地址可播放；JS Spider 与解析脚本会跳过。
+              添加标准 JSON API，或导入 TVBox 单仓/多仓 JSON；多仓将先显示子配置供选择。仅直接 HTTP(S) 媒体地址可播放；JS、Python、JAR Spider 与解析脚本不会执行。
             </div>
             <Input aria-label="TVBox 源名称" value={tvboxName} onChange={event => setTVBoxName(event.target.value)}
               placeholder="源名称（可选）" className="mx-3.5 mt-3 w-[calc(100%-28px)] h-10 rounded-(--r-ctl) bg-s3 px-3 text-[13px] text-on placeholder-dim outline-none" />
-            <Input aria-label="TVBox JSON/API 地址" value={tvboxUrl} onChange={event => setTVBoxUrl(event.target.value)}
+            <Input aria-label="TVBox JSON/API 地址" value={tvboxUrl} onChange={event => {
+              setTVBoxUrl(event.target.value); setTVBoxRepositories([]); setTVBoxRepositoryUrl(""); setTVBoxImportError("");
+            }}
               placeholder="https://example.com/api.php/provide/vod/" inputMode="url" autoCapitalize="none" autoCorrect="off"
               className="mx-3.5 mt-2 w-[calc(100%-28px)] h-10 rounded-(--r-ctl) bg-s3 px-3 text-[13px] text-on placeholder-dim outline-none" />
             <Button disabled={!tvboxUrl.trim() || tvboxImporting} onClick={() => void importTVBoxSource()}
               className="mx-3.5 my-3 w-[calc(100%-28px)] h-10 rounded-(--r-ctl) bg-primary text-[13px] font-semibold text-on-primary pressable disabled:opacity-60">
               {tvboxImporting ? "正在验证并导入…" : "验证并添加"}
             </Button>
+            {tvboxImportError && <div role="alert" className="mx-3.5 mb-3 text-[12px] text-danger leading-relaxed">{tvboxImportError}</div>}
+            {tvboxRepositories.length > 0 && <div role="group" aria-label="TVBox 子配置列表" className="mx-3.5 mb-3 rounded-(--r-sm) bg-s3 p-3">
+              <div className="text-[13px] font-semibold text-on">选择子配置 · {tvboxRepositories.length} 个</div>
+              <div className="text-[11px] text-dim mt-1 break-all">{tvboxRepositoryUrl}</div>
+              <p className="text-[12px] text-mut mt-2 mb-2">只导入所选配置中的标准 API；如果全是 Spider，将说明原因，不会添加空片库。</p>
+              <div className="max-h-64 overflow-y-auto">
+                {tvboxRepositories.map(repository => <Button key={repository.url} disabled={tvboxImporting}
+                  onClick={() => void importTVBoxSource(repository.url, repository.name)}
+                  className="w-full text-left py-2 border-t border-dim/20 pressable disabled:opacity-60">
+                  <div className="text-[13px] text-on">{repository.name}</div>
+                  <div className="text-[11px] text-dim truncate">{repository.url}</div>
+                </Button>)}
+              </div>
+            </div>}
             {tvboxSources.map(source => (
               <div key={source.id} className="flex items-center gap-2 px-3.5 py-3 border-t border-s3">
                 <Button aria-pressed={activeTVBoxId === source.id} onClick={() => {
