@@ -102,7 +102,17 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !src) return;
+    if (!video || !src) {
+      if (hlsRef.current) {
+        try { hlsRef.current.stopLoad(); } catch { /* ignore */ }
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      if (video) {
+        try { video.pause(); } catch { /* ignore */ }
+      }
+      return;
+    }
     setReady(false);
     reportedSizeRef.current = { w: 0, h: 0 };
     nearEndFiredRef.current = false;
@@ -110,7 +120,11 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
     const resume = proxyRecovery.resume();
     const onVideoResize = () => reportSize(video);
     video.addEventListener("resize", onVideoResize);
-    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    if (hlsRef.current) {
+      try { hlsRef.current.stopLoad(); } catch { /* ignore */ }
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
 
     const proxied = isLocalMedia(src);
     const url = proxied ? src : playlist(src);
@@ -198,7 +212,12 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
       video.removeEventListener("resize", onVideoResize);
       if (recoverTimerRef.current) { window.clearTimeout(recoverTimerRef.current); recoverTimerRef.current = null; }
       trace("source.cleanup");
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      if (hlsRef.current) {
+        try { hlsRef.current.stopLoad(); } catch { /* ignore */ }
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      try { video.pause(); } catch { /* ignore */ }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src, proxyRecovery.revision]);
