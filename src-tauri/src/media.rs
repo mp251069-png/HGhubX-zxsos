@@ -446,7 +446,7 @@ pub async fn handle(
     let started = std::time::Instant::now();
     let route = match path {
         "/img" => "image",
-        "/hls" => "playlist",
+        "/hls" | "/hls/playlist.m3u8" => "playlist",
         "/seg" => "segment_or_key",
         _ => "unknown",
     };
@@ -462,7 +462,7 @@ pub async fn handle(
                 }
                 Err(e) => respond(502, "text/plain", e.into_bytes(), "no-store"),
             },
-            "/hls" => match load_playlist(&target, origin).await {
+            "/hls" | "/hls/playlist.m3u8" => match load_playlist(&target, origin).await {
                 Ok(text) => respond(
                     200,
                     "application/vnd.apple.mpegurl",
