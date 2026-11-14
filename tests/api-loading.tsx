@@ -50,7 +50,7 @@ function Fixture() {
   const home = new URLSearchParams(location.search).get("page") === "home";
   return <AppProvider>
     <div style={{ position: "relative", width: 900, height: 1000 }}>
-      {home ? <Home active bottomInset={0} /> : <Category wide active={active} />}
+      {home ? <Home active bottomInset={0} /> : <Category wide active={active} onBrowseModeChange={() => {}} />}
     </div>
   </AppProvider>;
 }
