@@ -193,7 +193,7 @@ export function tvboxVideoCard(video: TVBoxVideo | TVBoxVod, source: TVBoxSource
   return {
     id: localId,
     title: video.title,
-    cover: video.cover ? cover(video.cover) : "",
+    cover: video.cover ? cover(video.cover, 480, source.url) : "",
     description: video.description,
     tags,
     score: video.score,
@@ -221,7 +221,7 @@ export function tvboxDetailModel(video: TVBoxVod, source: TVBoxSource, groupInde
     id: stableLocalId(source.id, video.id),
     title: video.title,
     description: video.description,
-    cover: video.cover,
+    cover: video.cover ? cover(video.cover, 480, source.url) : "",
     tags: [video.year, video.area, video.language].filter(Boolean),
     score: video.score,
     episode_count: episodes.length,
