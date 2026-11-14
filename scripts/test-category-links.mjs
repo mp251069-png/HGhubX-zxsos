@@ -44,7 +44,7 @@ try {
       report.external.push(url.href); return route.abort();
     });
     await page.goto(origin);
-    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "分类", exact: true }).click();
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "影视", exact: true }).click();
     const links = page.locator(".ios-collection-links").filter({ has: page.getByRole("button", { name: "专题", exact: true }) });
     await links.waitFor();
     await links.evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });

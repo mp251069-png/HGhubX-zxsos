@@ -20,7 +20,7 @@ try {
  const cdp=await page.context().newCDPSession(page);await cdp.send('Emulation.setCPUThrottlingRate',{rate:4});
  const samples=[];
  for(let i=0;i<18;i++) {
-  const label=['搜索','分类','我的'][i%3];
+  const label=['搜索','影视','我的'][i%3];
   samples.push(await page.evaluate(async label=>{
    const button=[...document.querySelectorAll('nav[aria-label="主导航"] button')].find(b=>b.textContent===label);
    const start=performance.now();button.click();

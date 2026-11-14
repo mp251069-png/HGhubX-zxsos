@@ -10,7 +10,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const output = join(root, "test-results", "mobile-layout", new Date().toISOString().replace(/[:.]/g, "-"));
 const userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1";
 const viewports = [{ width: 320, height: 694 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }];
-const tabs = ["首页", "搜索", "分类", "TVBox", "我的"];
+const tabs = ["首页", "搜索", "影视", "我的"];
 const report = {
   environment: { browser: "Chromium with iPhone UA", transport: "real App; Tauri IPC mocked; no upstream traffic", limitation: "Does not replace native iOS/WKWebView verification", userAgent },
   cases: [], external: [], pageErrors: [],
@@ -76,9 +76,13 @@ try {
     for (const [index, name] of tabs.entries()) {
       await nav.getByRole("button", { name, exact: true }).click();
       await page.waitForFunction(label => document.querySelector('.hg-tabbar button[aria-current="page"]')?.textContent === label, name);
-      if (name === "TVBox") {
+      if (name === "影视") {
+        const browseSwitch = page.getByRole("group", { name: "影视浏览模式" });
+        await browseSwitch.getByRole("button", { name: "TVBox 源", exact: true }).click();
         await page.getByRole("heading", { name: "TVBox 影视" }).waitFor();
         await page.getByRole("button", { name: "添加或导入 TVBox 源" }).waitFor();
+        await page.getByRole("group", { name: "影视浏览模式" }).getByRole("button", { name: "分类", exact: true }).click();
+        await page.getByRole("button", { name: "专题", exact: true }).waitFor();
       }
       // Keep the production transition enabled and measure its final position.
       await page.locator(".hg-drop").evaluate(async el => {
@@ -143,7 +147,7 @@ try {
     localStorage.setItem("hghubx_tvbox_active_v1", "fixture-a");
     window.dispatchEvent(new CustomEvent("hghubx:tvbox-source-changed"));
   });
-  await nav.getByRole("button", { name: "TVBox", exact: true }).click();
+  await page.getByRole("group", { name: "影视浏览模式" }).getByRole("button", { name: "TVBox 源", exact: true }).click();
   await page.getByText("Fixture 影视", { exact: true }).waitFor();
   await page.getByLabel("TVBox 数据源").selectOption("fixture-b");
   await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).host === "tv-b.fixture.invalid"));

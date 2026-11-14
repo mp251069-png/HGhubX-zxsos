@@ -8,6 +8,7 @@ const vite = await createServer({
 });
 try {
   const tvbox = await vite.ssrLoadModule("/src/tvbox.ts");
+  const api = await vite.ssrLoadModule("/src/api.ts");
   const source = { id: "fixture-source", name: "Fixture", url: "https://tv.fixture.invalid/api.php/provide/vod/?token=x" };
   const response = {
     code: 1,
@@ -53,6 +54,10 @@ try {
   const card = tvbox.tvboxVideoCard(page.items[0], source);
   assert.equal(card.id, page.items[0].localId);
   assert(card.cover.includes("/img?u="), "Poster must use the app's local image proxy for CSP compatibility");
+  const cardCover = new URL(card.cover);
+  assert.equal(cardCover.pathname, "/img");
+  assert.equal(cardCover.searchParams.get("u"), page.items[0].cover, "TVBox card proxy must target the original poster");
+  assert.equal(api.cover(card.cover), card.cover, "Img must not wrap an existing local poster proxy a second time");
 
   const wrapped = tvbox.parseTVBoxPage({ data: { list: [{ vod_id: "x", vod_name: "X" }], page: "1", pagecount: "0" } }, source);
   assert.equal(wrapped.items.length, 1, "data.list wrapper is supported");
@@ -77,6 +82,12 @@ try {
   assert.equal(tvbox.preferredTVBoxLine(mixedLines), 1, "Explicit HLS must be preferred over a first-line player webpage");
   assert.equal(tvbox.preferredTVBoxLine({ ...mixedLines, playGroups: [{ name: "web", episodes: [{ name: "1", url: "https://cdn.fixture.invalid/share/1" }] },
     { name: "HLS", episodes: [{ name: "1", url: "https://cdn.fixture.invalid/opaque/1" }] }] }), 1, "HLS route hints support extensionless media");
+  const perEpisodeLines = tvbox.parseTVBoxPage({ list: [{ vod_id: "per-episode", vod_name: "按集选择线路",
+    vod_play_from: "网页线路$$$HLS备用",
+    vod_play_url: "第1集$https://cdn.fixture.invalid/player?id=1#第2集$https://cdn.fixture.invalid/episode/2.m3u8$$$第1集$https://cdn.fixture.invalid/backup/1.m3u8#第2集$https://cdn.fixture.invalid/backup/2.m3u8" }] }, source).items[0];
+  assert.equal(tvbox.preferredTVBoxLine(perEpisodeLines, 1), 1, "Episode 1 must prefer a media URL over the player webpage");
+  assert.equal(tvbox.preferredTVBoxLine(perEpisodeLines, 2), 0, "Episode 2 may use a direct route even when episode 1 in that line is a player webpage");
+  assert.equal(tvbox.tvboxMediaUrl(perEpisodeLines, 2, tvbox.preferredTVBoxLine(perEpisodeLines, 2)), "https://cdn.fixture.invalid/episode/2.m3u8");
   assert.equal(tvbox.preferredTVBoxLine(undefined), 0);
 
   const config = tvbox.parseTVBoxConfig({ sites: [
@@ -153,7 +164,7 @@ try {
   }
 
   assert.throws(() => tvbox.tvboxMediaUrl({ ...page.items[0], playGroups: [] }, 1), /需要解析器/);
-  console.log("TVBox checks passed: nested JSON, endpoint-relative URLs, nested/top-level paging, categories, multiple play groups, HLS/MP4 proxy selection, image proxy, config Spider filtering and unsupported playback handling.");
+  console.log("TVBox checks passed: nested JSON, endpoint-relative URLs, paging, categories, idempotent image proxy, per-episode HLS/MP4 route selection, config Spider filtering and unsupported playback handling.");
 } finally {
   await vite.close();
 }

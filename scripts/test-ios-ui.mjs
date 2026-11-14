@@ -116,7 +116,7 @@ try {
         return size >= minimum;
       }, test.minimumFontSize), "Chromium applies the enlarged minimum text size");
       const nav = page.getByRole("navigation", { name: "主导航" });
-      for (const label of ["首页", "搜索", "分类", "我的"]) await nav.getByRole("button", { name: label, exact: true }).waitFor();
+      for (const label of ["首页", "搜索", "影视", "我的"]) await nav.getByRole("button", { name: label, exact: true }).waitFor();
       await page.waitForFunction(theme => document.documentElement.dataset.theme === theme, test.theme);
       if (test.android) await page.waitForFunction(() => window.__IOS_UI_FIXTURE__.hasHardwareBack());
       check("original navigation and persisted appearance");
@@ -202,7 +202,7 @@ try {
       await query.waitFor();
       check("all three rank choices move the shared indicator into the selected button bounds");
 
-      await nav.getByRole("button", { name: "分类", exact: true }).click();
+      await nav.getByRole("button", { name: "影视", exact: true }).click();
       await page.getByRole("button").filter({ has: page.getByText("专题", { exact: true }) }).click();
       const topic = page.getByRole("button").filter({ has: page.getByText("本周精选", { exact: true }) });
       await topic.waitFor();
