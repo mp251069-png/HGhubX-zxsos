@@ -22,7 +22,7 @@ try {
   await vite.listen();
   const origin = vite.resolvedUrls.local[0];
   browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_EXECUTABLE || undefined });
-  const context = await browser.newContext({ userAgent, isMobile: true, hasTouch: true, viewport: viewports[0] });
+  const context = await browser.newContext({ userAgent, isMobile: true, hasTouch: true, colorScheme: "dark", viewport: viewports[0] });
   await context.addInitScript(() => {
     const fixture = { calls: [], unexpected: [] };
     const emptyPage = { items: [], pagination: { page: 1, pages: 1, size: 8, total: 0 } };
@@ -46,6 +46,18 @@ try {
           if (url === "https://fixture.invalid/tvbox-spider.json") return Promise.resolve({ sites: [{ name: "仅 Spider", type: 3, api: "csp_fixture_spider" }] });
           if (url === "https://fixture.invalid/tvbox-standard.json") return Promise.resolve({ sites: [{ name: "标准影片 API", type: 1, api: "https://fixture.invalid/api.php/provide/vod/" }] });
           return Promise.resolve({ code: 1, page: 1, pagecount: 1, total: 1, data: { class: [{ type_id: "1", type_name: "电影" }], list: [{ vod_id: "movie-1", vod_name: "Fixture 影视", vod_year: "2026", vod_play_from: "线路一", vod_play_url: "正片$https://media.fixture.invalid/movie.mp4" }] } });
+        }
+        if (cmd === "live_fetch") {
+          return Promise.resolve({
+            final_url: "https://fixture.invalid/iptv/live.m3u8",
+            text: [
+              "#EXTM3U",
+              '#EXTINF:-1 tvg-id="cctv1" group-title="央视",CCTV-1 综合',
+              "https://fixture.invalid/live/cctv1.m3u8",
+              '#EXTINF:-1 tvg-id=" satellite1" group-title="卫视",卫视一台',
+              "channels/sat1.m3u8",
+            ].join("\n"),
+          });
         }
         if (["api_feed", "api_category", "api_posts", "api_original_videos", "api_post_category", "api_search_hot"].includes(cmd)) return Promise.resolve(emptyPage);
         // App's development-only playback self-test must not fetch media upstream.
@@ -77,12 +89,19 @@ try {
       await nav.getByRole("button", { name, exact: true }).click();
       await page.waitForFunction(label => document.querySelector('.hg-tabbar button[aria-current="page"]')?.textContent === label, name);
       if (name === "影视") {
+        await page.getByRole("heading", { name: "影视" }).waitFor();
+        const topSwitch = page.getByRole("group", { name: "影视与直播模式" });
         const browseSwitch = page.getByRole("group", { name: "影视浏览模式" });
         await browseSwitch.getByRole("button", { name: "TVBox 源", exact: true }).click();
-        await page.getByRole("heading", { name: "TVBox 影视" }).waitFor();
+        await page.getByRole("heading", { name: "影视" }).waitFor();
+        assert.equal(await page.getByRole("button", { name: "管理 TVBox 源" }).count(), 0, "影视页顶部不得再放资源管理齿轮");
         await page.getByRole("button", { name: "添加或导入 TVBox 源" }).waitFor();
-        await page.getByRole("group", { name: "影视浏览模式" }).getByRole("button", { name: "分类", exact: true }).click();
+        await topSwitch.getByRole("button", { name: "直播", exact: true }).click();
+        await page.getByRole("button", { name: "前往设置管理直播源" }).waitFor();
+        await page.getByRole("group", { name: "影视与直播模式" }).getByRole("button", { name: "影视", exact: true }).click();
+        await page.getByRole("group", { name: "影视浏览模式" }).getByRole("button", { name: "HGhubX", exact: true }).click();
         await page.getByRole("button", { name: "专题", exact: true }).waitFor();
+        await page.screenshot({ path: join(output, `${viewport.width}x${viewport.height}-movies.png`), fullPage: true, animations: "disabled" });
       }
       // Keep the production transition enabled and measure its final position.
       await page.locator(".hg-drop").evaluate(async el => {
@@ -132,7 +151,7 @@ try {
   assert.equal(afterSpiderStorage.sources, null, "全 Spider 子仓不得添加源");
   assert.equal(afterSpiderStorage.active, null, "全 Spider 子仓不得设置活跃源");
   await page.getByRole("group", { name: "TVBox 子配置列表" }).getByRole("button", { name: /标准 API 子仓/ }).click();
-  await page.getByRole("heading", { name: "TVBox 影视" }).waitFor();
+  await page.getByRole("heading", { name: "影视" }).waitFor();
   await page.getByText("Fixture 影视", { exact: true }).waitFor();
   const importedStorage = await page.evaluate(() => ({ sources: JSON.parse(localStorage.getItem("hghubx_tvbox_sources_v1") || "[]"), active: localStorage.getItem("hghubx_tvbox_active_v1") }));
   assert.equal(importedStorage.sources.length, 1, "标准 API 子仓应添加一个源");
@@ -158,6 +177,24 @@ try {
   await tvboxSearch.press("Enter");
   await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).searchParams.get("wd") === "测试片"));
   report.tvbox_browse = { source_switch: true, category_filter: true, keyword_search: true, catalog_visible: true };
+
+  // Test APTV / M3U live source management in Settings and playback/filtering/switching in Live mode
+  await nav.getByRole("button", { name: "我的", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("heading", { name: "设置" }).waitFor();
+  await page.getByRole("textbox", { name: "M3U 订阅链接" }).fill("https://fixture.invalid/live.m3u8");
+  await page.getByRole("button", { name: "导入 M3U 订阅", exact: true }).click();
+  await page.getByTestId("live-player").waitFor();
+  await page.getByRole("list", { name: "直播频道列表" }).waitFor();
+  await page.screenshot({ path: join(output, "390x844-live-channels-fixture.png"), fullPage: true, animations: "disabled" });
+  await page.getByRole("button", { name: "收藏 CCTV-1 综合", exact: true }).click();
+  await page.getByRole("group", { name: "直播频道分组" }).getByRole("button", { name: /收藏 \(1\)/ }).click();
+  assert.equal(await page.getByRole("listitem").count(), 1, "收藏筛选应仅显示已收藏频道");
+  await page.getByRole("group", { name: "直播频道分组" }).getByRole("button", { name: /全部 \(2\)/ }).click();
+  await page.getByRole("button", { name: "下一台", exact: true }).click();
+  await page.getByRole("textbox", { name: "搜索直播频道" }).fill("卫视");
+  assert.equal(await page.getByRole("listitem").count(), 1, "频道搜索应按关键词过滤");
+  report.live_browse = { imported: true, player_mounted: true, favorite_filter: true, channel_switch: true, keyword_search: true };
   report.ipc = await page.evaluate(() => ({ calls: window.mobileLayoutFixture.calls.map(call => call.cmd), unexpected: window.mobileLayoutFixture.unexpected }));
   assert.deepEqual(report.ipc.unexpected, [], "No unexpected Tauri calls");
   assert.deepEqual(report.pageErrors, [], "No page errors");
