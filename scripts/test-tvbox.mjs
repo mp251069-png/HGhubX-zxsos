@@ -57,6 +57,8 @@ try {
   const cardCover = new URL(card.cover);
   assert.equal(cardCover.pathname, "/img");
   assert.equal(cardCover.searchParams.get("u"), page.items[0].cover, "TVBox card proxy must target the original poster");
+  assert.equal(cardCover.searchParams.get("r"), "https://tv.fixture.invalid/", "TVBox poster requests use the source origin as Referer");
+  assert(!cardCover.searchParams.get("r").includes("token"), "TVBox source query tokens must not be sent as Referer");
   assert.equal(api.cover(card.cover), card.cover, "Img must not wrap an existing local poster proxy a second time");
   assert.equal(api.playlistRoute("ios"), "/hls/playlist.m3u8", "iOS native HLS route must expose the manifest extension");
   assert.equal(api.playlistRoute("linux"), "/hls", "Other platforms retain the existing HLS route");
