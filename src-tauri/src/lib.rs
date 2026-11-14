@@ -208,6 +208,7 @@ pub fn run() {
             api::debug_log,
             api::net_diag,
             api::tvbox_fetch,
+            api::live_fetch,
             api::tvbox_spider,
             api::line_state,
             api::line_set,

@@ -64,6 +64,12 @@ pub async fn tvbox_fetch(url: String) -> Result<Value, String> {
     crate::tvbox::fetch_json(&url).await
 }
 
+/// Fetch a bounded UTF-8 M3U/M3U8 playlist from a user-configured live source URL.
+#[tauri::command]
+pub async fn live_fetch(url: String) -> Result<Value, String> {
+    crate::tvbox::fetch_m3u(&url).await
+}
+
 /// Run a JavaScript source in a fresh bounded interpreter, never in the WebView.
 #[tauri::command]
 pub async fn tvbox_spider(source: Value, method: String, args: Value) -> Result<Value, String> {

@@ -108,7 +108,7 @@ fn image_kind(buf: &[u8]) -> Option<&'static str> {
 
 /// 取封面：命中缓存直接返回，否则下载并按需解密。
 pub async fn load_image(url: &str) -> Result<(String, Arc<Vec<u8>>), String> {
-    load_image_with_referer(url, None).await
+    load_image_with_referer_and_user_agent(url, None, None).await
 }
 
 /// TVBox 来源可能使用图床防盗链；仅使用调用方传入的来源 origin，不带路径或查询令牌。
@@ -116,12 +116,21 @@ async fn load_image_with_referer(
     url: &str,
     referer: Option<&str>,
 ) -> Result<(String, Arc<Vec<u8>>), String> {
-    let cache_key = format!("{url}\0{}", referer.unwrap_or(""));
+    load_image_with_referer_and_user_agent(url, referer, None).await
+}
+
+async fn load_image_with_referer_and_user_agent(
+    url: &str,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
+) -> Result<(String, Arc<Vec<u8>>), String> {
+    let cache_key = media_cache_key(url, referer, user_agent);
     if let Some(hit) = IMG_CACHE.lock().unwrap().get(&cache_key).cloned() {
         let kind = image_kind(&hit).unwrap_or("image/jpeg");
         return Ok((kind.to_string(), hit));
     }
-    let (_, bytes) = crate::net::fetch_bytes_with_referer(url, referer).await?;
+    let (_, bytes) =
+        crate::net::fetch_bytes_with_referer_and_user_agent(url, referer, user_agent).await?;
     let plain = if image_kind(&bytes).is_some() {
         bytes
     } else {
@@ -150,6 +159,23 @@ fn query_value(query: &str, key: &str) -> Option<String> {
     query
         .split('&')
         .find_map(|part| part.strip_prefix(&format!("{key}=")).map(dec))
+}
+
+const MAX_MEDIA_USER_AGENT_LEN: usize = 512;
+
+fn valid_user_agent(value: &str) -> Option<String> {
+    (value.len() <= MAX_MEDIA_USER_AGENT_LEN
+        && !value.is_empty()
+        && !value.chars().any(|c| c.is_control()))
+    .then(|| value.to_string())
+}
+
+fn media_cache_key(url: &str, referer: Option<&str>, user_agent: Option<&str>) -> String {
+    format!(
+        "{url}\0{}\0{}",
+        referer.unwrap_or(""),
+        user_agent.unwrap_or("")
+    )
 }
 
 /* ───────────────────────── HLS ───────────────────────── */
@@ -218,27 +244,108 @@ fn map_uri_attributes(line: &str, mut rewrite: impl FnMut(&str) -> String) -> St
 }
 
 fn rewrite_uri_attr(line: &str, prefix: &str) -> String {
-    map_uri_attributes(line, |uri| format!("{prefix}/seg?u={}", enc(uri)))
+    rewrite_uri_attr_with_referer(line, prefix, None)
+}
+
+fn format_seg_proxy_url(prefix: &str, uri: &str, referer: Option<&str>) -> String {
+    format_seg_proxy_url_with_user_agent(prefix, uri, referer, None)
+}
+
+fn format_seg_proxy_url_with_user_agent(
+    prefix: &str,
+    uri: &str,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
+) -> String {
+    let mut out = format!("{prefix}/seg?u={}", enc(uri));
+    if let Some(r) = referer.filter(|r| !r.is_empty()) {
+        out.push_str(&format!("&r={}", enc(r)));
+    }
+    if let Some(ua) = user_agent.filter(|ua| !ua.is_empty()) {
+        out.push_str(&format!("&ua={}", enc(ua)));
+    }
+    out
+}
+
+fn rewrite_uri_attr_with_referer(line: &str, prefix: &str, referer: Option<&str>) -> String {
+    rewrite_uri_attr_with_referer_and_user_agent(line, prefix, referer, None)
+}
+
+fn rewrite_uri_attr_with_referer_and_user_agent(
+    line: &str,
+    prefix: &str,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
+) -> String {
+    map_uri_attributes(line, |uri| {
+        format_seg_proxy_url_with_user_agent(prefix, uri, referer, user_agent)
+    })
+}
+
+fn is_live_media_playlist(text: &str) -> bool {
+    let trimmed = text.trim_start_matches('\u{feff}');
+    trimmed.starts_with("#EXTM3U")
+        && trimmed.contains("#EXTINF:")
+        && !trimmed.contains("#EXT-X-ENDLIST")
+        && !trimmed.contains("#EXT-X-STREAM-INF")
 }
 
 /// 取 m3u8 并把 key / 分片地址改写到本地协议。
-pub async fn load_playlist(url: &str, prefix: &str) -> Result<Arc<String>, String> {
+pub async fn load_playlist_with_referer(
+    url: &str,
+    prefix: &str,
+    referer: Option<&str>,
+) -> Result<Arc<String>, String> {
+    load_playlist_with_referer_and_user_agent(url, prefix, referer, None).await
+}
+
+pub async fn load_playlist_with_referer_and_user_agent(
+    url: &str,
+    prefix: &str,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
+) -> Result<Arc<String>, String> {
     // 缓存 key 要带 prefix：同一份 m3u8 在不同 scheme 下改写结果不一样
-    let cache_key = format!("{prefix}|{url}");
+    let cache_key = format!("{prefix}|{}", media_cache_key(url, referer, user_agent));
     if let Some(hit) = PL_CACHE.lock().unwrap().get(&cache_key).cloned() {
         return Ok(hit);
     }
-    let (_, bytes, final_url) = crate::net::fetch_bytes_with_final_url(url).await?;
+    let (_, bytes, final_url) =
+        crate::net::fetch_bytes_with_final_url_and_referer_and_user_agent(url, referer, user_agent)
+            .await?;
     let text = std::str::from_utf8(&bytes).map_err(|_| "播放列表不是 UTF-8 文本")?;
     if !text.trim_start_matches('\u{feff}').starts_with("#EXTM3U") {
         return Err("响应不是 HLS 播放列表".into());
     }
-    let arc = Arc::new(rewrite_playlist(&final_url, text, prefix));
-    cache_put(&PL_CACHE, cache_key, arc.clone(), PL_CACHE_MAX);
+    let arc = Arc::new(rewrite_playlist_with_referer(
+        &final_url, text, prefix, referer,
+    ));
+    if !is_live_media_playlist(text) {
+        cache_put(&PL_CACHE, cache_key, arc.clone(), PL_CACHE_MAX);
+    }
     Ok(arc)
 }
 
 fn rewrite_playlist(url: &str, text: &str, prefix: &str) -> String {
+    rewrite_playlist_with_referer_and_user_agent(url, text, prefix, None, None)
+}
+
+fn rewrite_playlist_with_referer(
+    url: &str,
+    text: &str,
+    prefix: &str,
+    referer: Option<&str>,
+) -> String {
+    rewrite_playlist_with_referer_and_user_agent(url, text, prefix, referer, None)
+}
+
+fn rewrite_playlist_with_referer_and_user_agent(
+    url: &str,
+    text: &str,
+    prefix: &str,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
+) -> String {
     let mut out = String::with_capacity(text.len() + 512);
     for raw in text.trim_start_matches('\u{feff}').lines() {
         let line = raw.trim_end();
@@ -272,13 +379,17 @@ fn rewrite_playlist(url: &str, text: &str, prefix: &str) -> String {
             if line.contains("URI=\"") {
                 // KEY/MAP/MEDIA/SESSION-KEY/PART/PRELOAD-HINT 等 URI 都必须经过目标检查。
                 let absolute = absolutize_uri_in_attr(url, line);
-                out.push_str(&rewrite_uri_attr(&absolute, prefix));
+                out.push_str(&rewrite_uri_attr_with_referer_and_user_agent(
+                    &absolute, prefix, referer, user_agent,
+                ));
             } else {
                 out.push_str(line);
             }
         } else {
             let absolute = absolutize(url, line);
-            out.push_str(&format!("{prefix}/seg?u={}", enc(&absolute)));
+            out.push_str(&format_seg_proxy_url_with_user_agent(
+                prefix, &absolute, referer, user_agent,
+            ));
         }
         out.push('\n');
     }
@@ -291,14 +402,28 @@ fn absolutize_uri_in_attr(base: &str, line: &str) -> String {
 }
 
 /// 分片 / AES Key 带内存缓存：拖动进度条时避免重复拉取同一片造成卡顿。
-pub async fn load_segment(url: &str) -> Result<(Option<String>, Arc<Vec<u8>>, String), String> {
-    if let Some((ctype, bytes, final_url)) = KEY_CACHE.lock().unwrap().get(url).cloned() {
+pub async fn load_segment_with_referer(
+    url: &str,
+    referer: Option<&str>,
+) -> Result<(Option<String>, Arc<Vec<u8>>, String), String> {
+    load_segment_with_referer_and_user_agent(url, referer, None).await
+}
+
+pub async fn load_segment_with_referer_and_user_agent(
+    url: &str,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
+) -> Result<(Option<String>, Arc<Vec<u8>>, String), String> {
+    let cache_key = media_cache_key(url, referer, user_agent);
+    if let Some((ctype, bytes, final_url)) = KEY_CACHE.lock().unwrap().get(&cache_key).cloned() {
         return Ok((Some(ctype), bytes, final_url));
     }
-    if let Some((ctype, bytes, final_url)) = SEG_CACHE.lock().unwrap().get(url).cloned() {
+    if let Some((ctype, bytes, final_url)) = SEG_CACHE.lock().unwrap().get(&cache_key).cloned() {
         return Ok((Some(ctype), bytes, final_url));
     }
-    let (ctype, bytes, final_url) = crate::net::fetch_bytes_with_final_url(url).await?;
+    let (ctype, bytes, final_url) =
+        crate::net::fetch_bytes_with_final_url_and_referer_and_user_agent(url, referer, user_agent)
+            .await?;
     let mime = ctype.clone().unwrap_or_else(|| {
         let p = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
         if p.ends_with(".ts") {
@@ -309,12 +434,25 @@ pub async fn load_segment(url: &str) -> Result<(Option<String>, Arc<Vec<u8>>, St
             "application/octet-stream".to_string()
         }
     });
+    let live_playlist = std::str::from_utf8(&bytes).is_ok_and(is_live_media_playlist);
     let len = bytes.len();
     let arc = Arc::new(bytes);
-    if len <= 65536 {
-        cache_put(&KEY_CACHE, url.to_string(), (mime.clone(), arc.clone(), final_url.clone()), KEY_CACHE_MAX);
-    } else if len <= SEG_CACHE_MAX_BYTES {
-        cache_put(&SEG_CACHE, url.to_string(), (mime.clone(), arc.clone(), final_url.clone()), SEG_CACHE_MAX);
+    if !live_playlist {
+        if len <= 65536 {
+            cache_put(
+                &KEY_CACHE,
+                cache_key,
+                (mime.clone(), arc.clone(), final_url.clone()),
+                KEY_CACHE_MAX,
+            );
+        } else if len <= SEG_CACHE_MAX_BYTES {
+            cache_put(
+                &SEG_CACHE,
+                cache_key,
+                (mime.clone(), arc.clone(), final_url.clone()),
+                SEG_CACHE_MAX,
+            );
+        }
     }
     Ok((Some(mime), arc, final_url))
 }
@@ -430,18 +568,51 @@ fn segment_response_at_url(
     bytes: Vec<u8>,
     origin: &str,
 ) -> Response<Vec<u8>> {
+    segment_response_at_url_with_referer_and_user_agent(final_url, ctype, bytes, origin, None, None)
+}
+
+fn segment_response_at_url_with_referer(
+    final_url: &str,
+    ctype: Option<&str>,
+    bytes: Vec<u8>,
+    origin: &str,
+    referer: Option<&str>,
+) -> Response<Vec<u8>> {
+    segment_response_at_url_with_referer_and_user_agent(
+        final_url, ctype, bytes, origin, referer, None,
+    )
+}
+
+fn segment_response_at_url_with_referer_and_user_agent(
+    final_url: &str,
+    ctype: Option<&str>,
+    bytes: Vec<u8>,
+    origin: &str,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
+) -> Response<Vec<u8>> {
     let playlist = ctype.is_some_and(|t| t.to_ascii_lowercase().contains("mpegurl"))
         || bytes.starts_with(b"#EXTM3U")
         || bytes.starts_with(b"\xef\xbb\xbf#EXTM3U");
     if playlist {
         return match std::str::from_utf8(&bytes) {
-            Ok(text) => respond(
-                200,
-                "application/vnd.apple.mpegurl",
-                rewrite_playlist(final_url, text, origin).into_bytes(),
-                // Rewriting nested URIs does not require disabling the upstream cache policy.
-                "public, max-age=3600",
-            ),
+            Ok(text) => {
+                let cache_policy = if is_live_media_playlist(text) {
+                    "no-store"
+                } else {
+                    // Rewriting nested URIs does not require disabling the upstream cache policy.
+                    "public, max-age=3600"
+                };
+                respond(
+                    200,
+                    "application/vnd.apple.mpegurl",
+                    rewrite_playlist_with_referer_and_user_agent(
+                        final_url, text, origin, referer, user_agent,
+                    )
+                    .into_bytes(),
+                    cache_policy,
+                )
+            }
             Err(_) => respond(
                 502,
                 "text/plain",
@@ -469,7 +640,8 @@ pub async fn handle(
     range: Option<&str>,
 ) -> Response<Vec<u8>> {
     let target = query_value(query, "u").unwrap_or_default();
-    let image_referer = query_value(query, "r").and_then(|value| normalized_image_referer(&value));
+    let media_referer = query_value(query, "r").and_then(|value| normalized_image_referer(&value));
+    let media_user_agent = query_value(query, "ua").and_then(|value| valid_user_agent(&value));
 
     if target.is_empty() {
         return respond(400, "text/plain", b"missing u".to_vec(), "no-store");
@@ -488,24 +660,52 @@ pub async fn handle(
     );
     let response = apply_byte_range(
         match path {
-            "/img" => match load_image_with_referer(&target, image_referer.as_deref()).await {
+            "/img" => match load_image_with_referer_and_user_agent(
+                &target,
+                media_referer.as_deref(),
+                media_user_agent.as_deref(),
+            )
+            .await
+            {
                 Ok((kind, bytes)) => {
                     respond(200, &kind, bytes.as_ref().clone(), "public, max-age=86400")
                 }
                 Err(e) => respond(502, "text/plain", e.into_bytes(), "no-store"),
             },
-            "/hls" | "/hls/playlist.m3u8" => match load_playlist(&target, origin).await {
-                Ok(text) => respond(
-                    200,
-                    "application/vnd.apple.mpegurl",
-                    text.as_bytes().to_vec(),
-                    "no-store",
-                ),
-                Err(e) => respond(502, "text/plain", e.into_bytes(), "no-store"),
-            },
-            "/seg" => match load_segment(&target).await {
+            "/hls" | "/hls/playlist.m3u8" => {
+                match load_playlist_with_referer_and_user_agent(
+                    &target,
+                    origin,
+                    media_referer.as_deref(),
+                    media_user_agent.as_deref(),
+                )
+                .await
+                {
+                    Ok(text) => respond(
+                        200,
+                        "application/vnd.apple.mpegurl",
+                        text.as_bytes().to_vec(),
+                        "no-store",
+                    ),
+                    Err(e) => respond(502, "text/plain", e.into_bytes(), "no-store"),
+                }
+            }
+            "/seg" => match load_segment_with_referer_and_user_agent(
+                &target,
+                media_referer.as_deref(),
+                media_user_agent.as_deref(),
+            )
+            .await
+            {
                 Ok((ctype, bytes, final_url)) => {
-                    segment_response_at_url(&final_url, ctype.as_deref(), bytes.as_ref().clone(), origin)
+                    segment_response_at_url_with_referer_and_user_agent(
+                        &final_url,
+                        ctype.as_deref(),
+                        bytes.as_ref().clone(),
+                        origin,
+                        media_referer.as_deref(),
+                        media_user_agent.as_deref(),
+                    )
                 }
                 Err(e) => respond(502, "text/plain", e.into_bytes(), "no-store"),
             },
@@ -601,9 +801,9 @@ mod tests {
             text.as_bytes().to_vec(),
             LOCAL_ORIGIN,
         );
-        assert!(std::str::from_utf8(nested.body()).unwrap().contains(&enc(
-            "https://cdn.example/v2/playlist/segment.ts?sig=one"
-        )));
+        assert!(std::str::from_utf8(nested.body())
+            .unwrap()
+            .contains(&enc("https://cdn.example/v2/playlist/segment.ts?sig=one")));
     }
 
     #[test]
@@ -759,7 +959,9 @@ mod tests {
         );
         // 分片必须绝对化到源站，并保留签名查询串。
         assert!(
-            body.contains("https%3A%2F%2Fcdn%2Eexample%2Fvideos5%2Fabc%2Fseg%2D1%2Ets%3Fauth%5Fkey%3D"),
+            body.contains(
+                "https%3A%2F%2Fcdn%2Eexample%2Fvideos5%2Fabc%2Fseg%2D1%2Ets%3Fauth%5Fkey%3D"
+            ),
             "segment not absolutized with query: {body}"
         );
         // 加密 KEY 也要走本地代理，否则 hls.js 会直接打源站被 CORS 拦住。
@@ -821,6 +1023,72 @@ mod tests {
             ),
             Some("https://tv.example/".into())
         );
+    }
+
+    #[test]
+    fn live_media_playlist_and_referer_rewrite_preserve_safety_and_freshness() {
+        let live_text =
+            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXTINF:5.0,\nseg1.ts\n";
+        let vod_text = "#EXTM3U\n#EXTINF:5.0,\nseg1.ts\n#EXT-X-ENDLIST\n";
+        let master_text = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nsub/index.m3u8\n";
+        assert!(is_live_media_playlist(live_text));
+        assert!(!is_live_media_playlist(vod_text));
+        assert!(!is_live_media_playlist(master_text));
+
+        let rewritten = rewrite_playlist_with_referer(
+            "https://live.example/ch/index.m3u8",
+            live_text,
+            LOCAL_ORIGIN,
+            Some("https://portal.example/"),
+        );
+        assert!(rewritten.contains(&format!(
+            "{LOCAL_ORIGIN}/seg?u={}&r={}",
+            enc("https://live.example/ch/seg1.ts"),
+            enc("https://portal.example/")
+        )));
+
+        let live_resp = segment_response_at_url_with_referer(
+            "https://live.example/ch/index.m3u8",
+            Some("application/vnd.apple.mpegurl"),
+            live_text.as_bytes().to_vec(),
+            LOCAL_ORIGIN,
+            Some("https://portal.example/"),
+        );
+        assert_eq!(live_resp.headers()["Cache-Control"], "no-store");
+    }
+
+    #[test]
+    fn user_agent_propagates_to_nested_resources_and_cache_identity() {
+        let ua = Some("Live Player/1.2");
+        let rewritten = rewrite_playlist_with_referer_and_user_agent(
+            "https://live.example/ch/index.m3u8",
+            "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\nseg.ts\n",
+            LOCAL_ORIGIN,
+            Some("https://portal.example/"),
+            ua,
+        );
+        assert!(rewritten.matches("&ua=Live%20Player%2F1%2E2").count() == 2);
+        assert_ne!(
+            media_cache_key("https://cdn.example/seg.ts", Some("https://a/"), Some("A")),
+            media_cache_key("https://cdn.example/seg.ts", Some("https://a/"), Some("B"))
+        );
+        assert_eq!(
+            rewrite_playlist(
+                "https://cdn.example/list.m3u8",
+                "#EXTM3U\nseg.ts\n",
+                LOCAL_ORIGIN
+            )
+            .contains("&ua="),
+            false
+        );
+    }
+
+    #[test]
+    fn invalid_user_agent_query_values_are_not_forwarded() {
+        assert!(valid_user_agent("Mozilla/5.0").is_some());
+        assert!(valid_user_agent("bad\nua").is_none());
+        assert!(valid_user_agent(&"x".repeat(MAX_MEDIA_USER_AGENT_LEN + 1)).is_none());
+        assert!(valid_user_agent("").is_none());
     }
 
     /// 联网测试：默认跳过。封面地址带时效签名，不能硬编码进仓库，

@@ -47,7 +47,10 @@ struct LineConfig {
 
 impl Default for LineConfig {
     fn default() -> Self {
-        Self { base: DEFAULT_BASE.to_string(), custom: false }
+        Self {
+            base: DEFAULT_BASE.to_string(),
+            custom: false,
+        }
     }
 }
 
@@ -87,7 +90,9 @@ pub fn normalize_base(raw: &str) -> Option<String> {
 pub fn trusted_auth_origin(origin: &str) -> bool {
     matches!(origin, "https://huangguoai.com" | "https://huangguoai.ai")
         || crate::lines::is_trusted_mirror(origin)
-        || BASE.read().is_ok_and(|line| line.custom && line.base == origin)
+        || BASE
+            .read()
+            .is_ok_and(|line| line.custom && line.base == origin)
 }
 
 fn persisted_base(text: &str) -> Option<String> {
@@ -101,7 +106,10 @@ fn persisted_line(text: &str) -> Option<LineConfig> {
     // Accept the fork's v2 format as well as legacy {base}. Only explicit v2
     // custom selections carry custom-origin consent across restarts.
     let custom = value.get("v").and_then(Value::as_u64) == Some(2)
-        && value.get("custom").and_then(Value::as_bool).unwrap_or(false)
+        && value
+            .get("custom")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
         && base != DEFAULT_BASE;
     Some(LineConfig { base, custom })
 }
@@ -111,8 +119,10 @@ pub fn bind_base(dir: &std::path::Path) {
     network_policy::bind_security(dir);
     crate::proxy::bind(dir);
     let path = dir.join("line.json");
-    let restored = std::fs::read_to_string(&path).ok()
-        .and_then(|text| persisted_line(&text)).unwrap_or_default();
+    let restored = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| persisted_line(&text))
+        .unwrap_or_default();
     if let Ok(mut current) = BASE.write() {
         *current = restored;
     }
@@ -131,12 +141,19 @@ pub fn set_custom_base(url: &str) -> Result<String, String> {
     apply_base(url, true)
 }
 
-fn save_line(current: &mut LineConfig, next: LineConfig, path: Option<&std::path::Path>) -> Result<(), String> {
+fn save_line(
+    current: &mut LineConfig,
+    next: LineConfig,
+    path: Option<&std::path::Path>,
+) -> Result<(), String> {
     if let Some(path) = path {
         let temp = path.with_extension("json.tmp");
-        std::fs::write(&temp, json!({ "v": 2, "base": next.base, "custom": next.custom }).to_string())
-            .and_then(|_| std::fs::rename(&temp, path))
-            .map_err(|_| "线路保存失败，已保持原线路，请检查应用数据目录")?;
+        std::fs::write(
+            &temp,
+            json!({ "v": 2, "base": next.base, "custom": next.custom }).to_string(),
+        )
+        .and_then(|_| std::fs::rename(&temp, path))
+        .map_err(|_| "线路保存失败，已保持原线路，请检查应用数据目录")?;
     }
     *current = next;
     Ok(())
@@ -151,7 +168,14 @@ fn apply_base(url: &str, custom: bool) -> Result<String, String> {
     let mut current = BASE.write().map_err(|_| "线路设置锁失败")?;
     let previous = current.base.clone();
     let file = BASE_FILE.read().map_err(|_| "线路配置锁失败")?;
-    save_line(&mut current, LineConfig { base: next.clone(), custom: custom && next != DEFAULT_BASE }, file.as_deref())?;
+    save_line(
+        &mut current,
+        LineConfig {
+            base: next.clone(),
+            custom: custom && next != DEFAULT_BASE,
+        },
+        file.as_deref(),
+    )?;
     drop(current);
     if previous != next {
         crate::playback_log::record(
@@ -178,9 +202,20 @@ fn proxy_override() -> Option<String> {
 
 /// 进程环境变量里有没有代理（reqwest 的 `system-proxy` 会自己读这些，不重复应用）。
 fn env_proxy_set() -> bool {
-    ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]
-        .iter()
-        .any(|key| std::env::var(key).ok().is_some_and(|v| !v.trim().is_empty()))
+    [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ]
+    .iter()
+    .any(|key| {
+        std::env::var(key)
+            .ok()
+            .is_some_and(|v| !v.trim().is_empty())
+    })
 }
 
 /// 应用层最终采用的显式代理（不含环境变量——那部分交给 reqwest）。
@@ -296,7 +331,10 @@ fn macos_proxy_enabled() -> bool {
             text.lines().any(|line| {
                 let mut parts = line.splitn(2, ':');
                 parts.next().map(str::trim) == Some(*key)
-                    && parts.next().map(|value| value.trim() == "1").unwrap_or(false)
+                    && parts
+                        .next()
+                        .map(|value| value.trim() == "1")
+                        .unwrap_or(false)
             })
         })
 }
@@ -316,7 +354,11 @@ fn system_proxy_enabled() -> bool {
 /// 注意：reqwest 的 `system-proxy` 只在构建时读一次注册表 / 环境变量。代理软件被关掉后，
 /// 旧客户端仍会往 `127.0.0.1:7897` 建隧道，症状是满屏 `tunnel error: failed to create
 /// underlying connection`（浏览器却是通的，因为它每次都重读系统代理）。所以这里允许重建。
-fn build_client(host: &str, addrs: &[SocketAddr], route: &ProxyRoute) -> Result<reqwest::Client, String> {
+fn build_client(
+    host: &str,
+    addrs: &[SocketAddr],
+    route: &ProxyRoute,
+) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .user_agent(UA)
         .timeout(Duration::from_secs(20))
@@ -335,7 +377,9 @@ fn build_client(host: &str, addrs: &[SocketAddr], route: &ProxyRoute) -> Result<
         let proxy = reqwest::Proxy::all(proxy).map_err(|_| "代理配置无效（已隐藏原始值）")?;
         builder = builder.no_proxy().proxy(proxy);
     }
-    builder.build().map_err(|_| "无法创建 HTTP 客户端".to_string())
+    builder
+        .build()
+        .map_err(|_| "无法创建 HTTP 客户端".to_string())
 }
 
 /// One immutable selection is used for DNS, cache identity and client creation.
@@ -361,7 +405,12 @@ impl ProxyRoute {
             Mode::Custom => true,
             Mode::System => explicit.is_some() || system_proxy_routes_target(target),
         };
-        Self { mode: config.mode, explicit, active, generation: CLIENT_GENERATION.load(Ordering::Acquire) }
+        Self {
+            mode: config.mode,
+            explicit,
+            active,
+            generation: CLIENT_GENERATION.load(Ordering::Acquire),
+        }
     }
 
     fn fingerprint(&self) -> u64 {
@@ -424,10 +473,19 @@ fn proxy_active(target: &url::Url) -> bool {
 }
 
 fn client_key(strict: bool, host: &str, port: u16, public_dns: bool, route: &ProxyRoute) -> String {
-    format!("{strict}:{host}:{port}:{public_dns}:{}:{:x}:{}", route.active, route.fingerprint(), route.generation)
+    format!(
+        "{strict}:{host}:{port}:{public_dns}:{}:{:x}:{}",
+        route.active,
+        route.fingerprint(),
+        route.generation
+    )
 }
 
-async fn client_for_dns(raw: &str, public_dns: bool, strict: bool) -> Result<(url::Url, Arc<reqwest::Client>), String> {
+async fn client_for_dns(
+    raw: &str,
+    public_dns: bool,
+    strict: bool,
+) -> Result<(url::Url, Arc<reqwest::Client>), String> {
     let target = network_policy::parse_target_with_mode(raw, strict)?;
     let host = target.host_str().ok_or("目标缺少主机名")?;
     let port = target.port_or_known_default().ok_or("目标端口无效")?;
@@ -449,7 +507,10 @@ async fn client_for_dns(raw: &str, public_dns: bool, strict: bool) -> Result<(ur
         network_policy::check_addresses_with_mode(&resolution.addresses, strict)?;
         (resolution.addresses, CLIENT_TTL.min(resolution.ttl))
     } else if strict {
-        (network_policy::resolve_target(&target, strict).await?, CLIENT_TTL)
+        (
+            network_policy::resolve_target(&target, strict).await?,
+            CLIENT_TTL,
+        )
     } else {
         (Vec::new(), CLIENT_TTL)
     };
@@ -479,6 +540,20 @@ pub fn refresh_client() {
     }
 }
 
+const MAX_MEDIA_USER_AGENT_LEN: usize = 512;
+
+fn validate_user_agent(value: &str) -> Result<String, String> {
+    if value.is_empty()
+        || value.len() > MAX_MEDIA_USER_AGENT_LEN
+        || value.chars().any(|c| c.is_control())
+    {
+        return Err("User-Agent 无效".into());
+    }
+    reqwest::header::HeaderValue::from_str(value)
+        .map(|_| value.to_owned())
+        .map_err(|_| "User-Agent 无效".into())
+}
+
 /// 不可信 GET 的统一入口；自动重定向被关闭，每一跳重新检查 URL、DNS 并固定解析地址。
 pub async fn get(
     raw: &str,
@@ -486,11 +561,36 @@ pub async fn get(
     accept: Option<&str>,
     referer: Option<&str>,
 ) -> Result<reqwest::Response, String> {
-    get_with_dns(raw, timeout, accept, referer, false, network_policy::strict_security()).await
+    get_with_user_agent(raw, timeout, accept, referer, None).await
+}
+
+/// GET with the only caller-controlled header permitted for media playback.
+pub async fn get_with_user_agent(
+    raw: &str,
+    timeout: Duration,
+    accept: Option<&str>,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
+) -> Result<reqwest::Response, String> {
+    get_with_dns_and_user_agent(
+        raw,
+        timeout,
+        accept,
+        referer,
+        user_agent,
+        false,
+        network_policy::strict_security(),
+    )
+    .await
 }
 
 /// Strict GET for untrusted Spider code, independent of the global security toggle.
-pub async fn get_strict(raw: &str, timeout: Duration, accept: Option<&str>, referer: Option<&str>) -> Result<reqwest::Response, String> {
+pub async fn get_strict(
+    raw: &str,
+    timeout: Duration,
+    accept: Option<&str>,
+    referer: Option<&str>,
+) -> Result<reqwest::Response, String> {
     get_with_dns(raw, timeout, accept, referer, false, true).await
 }
 async fn get_with_dns(
@@ -501,6 +601,19 @@ async fn get_with_dns(
     public_dns: bool,
     strict: bool,
 ) -> Result<reqwest::Response, String> {
+    get_with_dns_and_user_agent(raw, timeout, accept, referer, None, public_dns, strict).await
+}
+
+async fn get_with_dns_and_user_agent(
+    raw: &str,
+    timeout: Duration,
+    accept: Option<&str>,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
+    public_dns: bool,
+    strict: bool,
+) -> Result<reqwest::Response, String> {
+    let user_agent = user_agent.map(validate_user_agent).transpose()?;
     tokio::time::timeout(timeout, async {
         let policy_error = |phase: &str, error: String| {
             crate::playback_log::record("network.target_failed", json!({"resource": crate::playback_log::resource_id(raw), "phase": phase, "error_kind": crate::playback_log::error_kind(&error)}));
@@ -517,6 +630,9 @@ async fn get_with_dns(
             }
             if let Some(value) = referer {
                 request = request.header("Referer", value);
+            }
+            if let Some(value) = user_agent.as_deref() {
+                request = request.header(reqwest::header::USER_AGENT, value);
             }
             let response = request.send().await.map_err(|e| err_text(&e))?;
             if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
@@ -615,7 +731,10 @@ fn redact_error_proxy_auth(message: &str) -> String {
         let authority_start = separator + 3;
         output.push_str(&rest[..authority_start]);
         rest = &rest[authority_start..];
-        let authority_end = rest.find(|ch: char| ch.is_whitespace() || matches!(ch, '/' | '?' | '#' | '\'' | '"' | '<' | '>'))
+        let authority_end = rest
+            .find(|ch: char| {
+                ch.is_whitespace() || matches!(ch, '/' | '?' | '#' | '\'' | '"' | '<' | '>')
+            })
             .unwrap_or(rest.len());
         let authority = &rest[..authority_end];
         if let Some(at) = authority.rfind('@') {
@@ -758,9 +877,20 @@ async fn tcp_probe(addr: Option<SocketAddr>, timeout: Duration) -> Value {
 /// HTTP 探测反映 App 实际请求路径；TCP 探测是独立 socket，不能据此覆盖 HTTP 结果。
 fn verdict(dns: &Value, tcp: &Value, http: &Value) -> (&'static str, String, Vec<String>) {
     let dns_err = dns.get("error").and_then(|v| v.as_str());
-    let fake = dns.get("has_fake_ip").and_then(|v| v.as_bool()).unwrap_or(false);
-    let kinds = dns.get("kinds").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let suspicious = dns.get("suspicious").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let fake = dns
+        .get("has_fake_ip")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let kinds = dns
+        .get("kinds")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let suspicious = dns
+        .get("suspicious")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     let status = http.get("status").and_then(|v| v.as_u64());
     let http_err = http.get("error").and_then(|v| v.as_str()).unwrap_or("");
     let tcp_ok = tcp.get("ok").and_then(|v| v.as_bool());
@@ -797,20 +927,17 @@ fn verdict(dns: &Value, tcp: &Value, http: &Value) -> (&'static str, String, Vec
                 vec![],
             );
         }
-        if kinds.iter().any(|kind| {
-            matches!(kind.as_str(), Some("loopback" | "unspecified" | "private"))
-        }) {
+        if kinds
+            .iter()
+            .any(|kind| matches!(kind.as_str(), Some("loopback" | "unspecified" | "private")))
+        {
             return (
                 "dns_hijack",
                 format!("DNS 返回了非公网地址，但应用 HTTP 请求已成功（HTTP {code}）"),
                 vec!["检查本机 DNS、VPN/TUN 和代理设置是否符合预期".into()],
             );
         }
-        return (
-            "ok",
-            format!("连通正常（HTTP {code}），线路可用"),
-            vec![],
-        );
+        return ("ok", format!("连通正常（HTTP {code}），线路可用"), vec![]);
     }
 
     // 收到 HTTP 错误状态也表示请求路径已到达 HTTP 服务，不能归因于直连 TCP 探测。
@@ -862,8 +989,8 @@ fn verdict(dns: &Value, tcp: &Value, http: &Value) -> (&'static str, String, Vec
     }
     if http_err.is_empty()
         && kinds
-        .iter()
-        .any(|k| matches!(k.as_str(), Some("loopback" | "unspecified" | "private")))
+            .iter()
+            .any(|k| matches!(k.as_str(), Some("loopback" | "unspecified" | "private")))
     {
         return (
             "dns_hijack",
@@ -892,9 +1019,8 @@ fn verdict(dns: &Value, tcp: &Value, http: &Value) -> (&'static str, String, Vec
             );
         }
         let certificate = lower.contains("certificate");
-        let handshake = lower.contains("tls")
-            || lower.contains("ssl")
-            || lower.contains("handshake");
+        let handshake =
+            lower.contains("tls") || lower.contains("ssl") || lower.contains("handshake");
         return (
             if certificate {
                 "tls_intercept"
@@ -933,15 +1059,25 @@ fn verdict(dns: &Value, tcp: &Value, http: &Value) -> (&'static str, String, Vec
         );
     }
     if tcp_ok == Some(false) {
-        let timeout = tcp.get("timeout").and_then(|v| v.as_bool()).unwrap_or(false);
+        let timeout = tcp
+            .get("timeout")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         return (
-            if timeout { "tcp_timeout" } else { "tcp_refused" },
             if timeout {
-                "DNS 正常，但独立直连 TCP socket 探测超时；这不能单独证明运营商或防火墙阻断".to_string()
+                "tcp_timeout"
+            } else {
+                "tcp_refused"
+            },
+            if timeout {
+                "DNS 正常，但独立直连 TCP socket 探测超时；这不能单独证明运营商或防火墙阻断"
+                    .to_string()
             } else {
                 format!(
                     "DNS 正常，但独立直连 TCP socket 探测失败：{}",
-                    tcp.get("error").and_then(|v| v.as_str()).unwrap_or("未知原因")
+                    tcp.get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("未知原因")
                 )
             },
             vec![
@@ -950,7 +1086,11 @@ fn verdict(dns: &Value, tcp: &Value, http: &Value) -> (&'static str, String, Vec
             ],
         );
     }
-    ("unknown", "信息不足：HTTP 请求和 TCP 探测均未给出可归类结果".into(), vec![])
+    (
+        "unknown",
+        "信息不足：HTTP 请求和 TCP 探测均未给出可归类结果".into(),
+        vec![],
+    )
 }
 
 /// Editable URL is returned only to the settings form; effective is always redacted.
@@ -964,7 +1104,12 @@ pub fn proxy_state() -> Value {
         Some(redact_proxy(explicit))
     } else {
         ["https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]
-            .iter().find_map(|key| std::env::var(key).ok().filter(|value| !value.trim().is_empty()))
+            .iter()
+            .find_map(|key| {
+                std::env::var(key)
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            })
             .map(|value| redact_proxy(&value))
             .or_else(|| Some("system".to_owned()))
     };
@@ -975,10 +1120,14 @@ pub fn proxy_state() -> Value {
 }
 
 fn healthy_proxy_response(status: u16, body: &[u8]) -> bool {
-    if status != 200 { return false; }
+    if status != 200 {
+        return false;
+    }
     serde_json::from_slice::<Value>(body).is_ok_and(|value| {
         value.get("status").and_then(Value::as_i64) == Some(1)
-            && value.get("data").is_some_and(crate::lines::healthy_video_data)
+            && value
+                .get("data")
+                .is_some_and(crate::lines::healthy_video_data)
     })
 }
 
@@ -992,8 +1141,11 @@ pub async fn test_proxy(mode: &str, url: &str) -> Value {
     };
     let origin = base();
     let started = Instant::now();
-    let result = tokio::time::timeout(Duration::from_secs(8),
-        probe_proxy_origin(&origin, &config, network_policy::strict_security())).await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(8),
+        probe_proxy_origin(&origin, &config, network_policy::strict_security()),
+    )
+    .await;
     let mut value = match result {
         Ok(Ok(value)) => value,
         Ok(Err(error)) => json!({"ok": false, "error": error}),
@@ -1003,32 +1155,54 @@ pub async fn test_proxy(mode: &str, url: &str) -> Value {
     value
 }
 
-async fn probe_proxy_origin(origin: &str, config: &crate::proxy::Config, strict: bool) -> Result<Value, String> {
-    let mut next = network_policy::parse_target_with_mode(&format!("{origin}/api/edge/request"), strict)?;
+async fn probe_proxy_origin(
+    origin: &str,
+    config: &crate::proxy::Config,
+    strict: bool,
+) -> Result<Value, String> {
+    let mut next =
+        network_policy::parse_target_with_mode(&format!("{origin}/api/edge/request"), strict)?;
     let envelope = json!({ "method": "GET", "path": "/api/videos?page=1&size=1", "body": "", "content_type": "" });
     for hop in 0..=5 {
         let route = ProxyRoute::for_config(config, &next);
-        let addresses = if strict && !route.active { network_policy::resolve_target(&next, strict).await? } else { Vec::new() };
+        let addresses = if strict && !route.active {
+            network_policy::resolve_target(&next, strict).await?
+        } else {
+            Vec::new()
+        };
         let client = build_client(next.host_str().ok_or("目标缺少主机名")?, &addresses, &route)?;
-        let response = client.post(next.clone())
+        let response = client
+            .post(next.clone())
             .header("Accept", "application/json")
             .header("Referer", format!("{origin}/"))
-            .json(&envelope).send().await.map_err(proxy_probe_error)?;
+            .json(&envelope)
+            .send()
+            .await
+            .map_err(proxy_probe_error)?;
         let status = response.status().as_u16();
         if response.status().is_redirection() {
-            if hop == 5 { return Err("重定向次数超过限制".into()) }
-            let location = response.headers().get(reqwest::header::LOCATION)
-                .and_then(|value| value.to_str().ok()).ok_or("重定向缺少有效 Location")?;
+            if hop == 5 {
+                return Err("重定向次数超过限制".into());
+            }
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or("重定向缺少有效 Location")?;
             next = edge_redirect_target(&next, status, location, true)?;
             continue;
         }
         if status != 200 {
-            return Ok(json!({"ok": false, "status": status, "via": route.label(), "error": "视频接口返回错误状态码"}));
+            return Ok(
+                json!({"ok": false, "status": status, "via": route.label(), "error": "视频接口返回错误状态码"}),
+            );
         }
         let mut response = response;
         let mut body = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(proxy_probe_error)? {
-            if body.len() + chunk.len() > 1024 * 1024 { return Err("视频接口响应超过测试大小限制".into()) }
+            if body.len() + chunk.len() > 1024 * 1024 {
+                return Err("视频接口响应超过测试大小限制".into());
+            }
             body.extend_from_slice(&chunk);
         }
         let ok = healthy_proxy_response(status, &body);
@@ -1044,10 +1218,16 @@ async fn probe_proxy_origin(origin: &str, config: &crate::proxy::Config, strict:
 fn proxy_probe_error(error: reqwest::Error) -> String {
     // reqwest's nested transport errors can contain the configured proxy URL.
     // Report the useful category without copying a credential-bearing address.
-    if error.is_timeout() { "代理连通性测试超时" }
-    else if error.is_connect() { "代理或目标连接失败，请检查地址、认证信息和网络" }
-    else if error.is_body() || error.is_decode() { "视频接口响应读取失败" }
-    else { "代理连通性测试请求失败" }.into()
+    if error.is_timeout() {
+        "代理连通性测试超时"
+    } else if error.is_connect() {
+        "代理或目标连接失败，请检查地址、认证信息和网络"
+    } else if error.is_body() || error.is_decode() {
+        "视频接口响应读取失败"
+    } else {
+        "代理连通性测试请求失败"
+    }
+    .into()
 }
 
 /// 网络自检：DNS / TCP / HTTP / 代理环境变量，用于远程定位「打不开」。
@@ -1248,7 +1428,9 @@ pub async fn edge(
         && !trusted_auth_origin(&cur)
     {
         if cur != base() || crate::lines::verify_published_origin(&cur).await.is_err() {
-            return Err("镜像线路仅供游客浏览；登录/注册请切换到固定线路或重新加载发布页验证镜像".into());
+            return Err(
+                "镜像线路仅供游客浏览；登录/注册请切换到固定线路或重新加载发布页验证镜像".into(),
+            );
         }
     }
     let (encoded, ctype) = match &body {
@@ -1385,36 +1567,64 @@ pub async fn fetch_bytes(url: &str) -> Result<(Option<String>, Vec<u8>), String>
 }
 
 /// 拉原始字节；第三方图片可指定经调用方校验过的来源 Referer。
-pub async fn fetch_bytes_with_referer(url: &str, referrer: Option<&str>) -> Result<(Option<String>, Vec<u8>), String> {
-    let (ctype, bytes, _) = fetch_bytes_with_final_url_and_referer(url, referrer).await?;
+pub async fn fetch_bytes_with_referer(
+    url: &str,
+    referrer: Option<&str>,
+) -> Result<(Option<String>, Vec<u8>), String> {
+    fetch_bytes_with_referer_and_user_agent(url, referrer, None).await
+}
+
+pub async fn fetch_bytes_with_referer_and_user_agent(
+    url: &str,
+    referrer: Option<&str>,
+    user_agent: Option<&str>,
+) -> Result<(Option<String>, Vec<u8>), String> {
+    let (ctype, bytes, _) =
+        fetch_bytes_with_final_url_and_referer_and_user_agent(url, referrer, user_agent).await?;
     Ok((ctype, bytes))
 }
 
 /// 拉取媒体资源并返回逐跳安全校验后的最终 URL；HLS 相对 URI 必须相对此地址解析。
-pub async fn fetch_bytes_with_final_url(url: &str) -> Result<(Option<String>, Vec<u8>, String), String> {
-    fetch_bytes_with_final_url_and_referer(url, None).await
-}
-
-async fn fetch_bytes_with_final_url_and_referer(
+pub async fn fetch_bytes_with_final_url_and_referer(
     url: &str,
     referrer: Option<&str>,
 ) -> Result<(Option<String>, Vec<u8>, String), String> {
+    fetch_bytes_with_final_url_and_referer_and_user_agent(url, referrer, None).await
+}
+
+pub async fn fetch_bytes_with_final_url_and_referer_and_user_agent(
+    url: &str,
+    referrer: Option<&str>,
+    user_agent: Option<&str>,
+) -> Result<(Option<String>, Vec<u8>, String), String> {
+    let user_agent = user_agent.map(validate_user_agent).transpose()?;
     static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let request = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let resource = crate::playback_log::resource_id(url);
     let mut attempt = 0;
     let url = url.to_string();
     let target = url::Url::parse(&url).ok();
-    let host = target.as_ref().and_then(|target| target.host_str()).unwrap_or("").to_string();
-    let public_dns = AtomicBool::new(MEDIA_DNS_ROUTES.lock().ok()
-        .is_some_and(|routes| routes.prefers_public(&host, Instant::now())));
-    let referer = referrer.map(str::to_owned).unwrap_or_else(|| format!("{}/", base()));
+    let host = target
+        .as_ref()
+        .and_then(|target| target.host_str())
+        .unwrap_or("")
+        .to_string();
+    let public_dns = AtomicBool::new(
+        MEDIA_DNS_ROUTES
+            .lock()
+            .ok()
+            .is_some_and(|routes| routes.prefers_public(&host, Instant::now())),
+    );
+    let referer = referrer
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{}/", base()));
     with_retry(true, || {
         attempt += 1;
         let attempt = attempt;
         let resource = resource.clone();
         let url = url.clone();
         let referer = referer.clone();
+        let user_agent = user_agent.clone();
         let host = &host;
         let target = &target;
         let public_dns = &public_dns;
@@ -1425,7 +1635,7 @@ async fn fetch_bytes_with_final_url_and_referer(
             let mut status = None;
             let mut headers_ms = None;
             let result = async {
-                let resp = get_with_dns(&url, Duration::from_secs(20), None, Some(&referer), using_public_dns, network_policy::strict_security()).await?;
+                let resp = get_with_dns_and_user_agent(&url, Duration::from_secs(20), None, Some(&referer), user_agent.as_deref(), using_public_dns, network_policy::strict_security()).await?;
                 status = Some(resp.status().as_u16());
                 headers_ms = Some(started.elapsed().as_millis() as u64);
                 if !resp.status().is_success() {
@@ -1473,15 +1683,35 @@ mod tests {
         assert!(!safe.contains("demo") && !safe.contains("secret") && !safe.contains("name:token"));
         assert!(safe.contains("https://example.com/") && safe.contains("[::1]:7897 refused"));
         assert!(safe.contains("socks5h://[redacted]@proxy.example:1080/path"));
-        assert_eq!(redact_error_proxy_auth("tls handshake eof"), "tls handshake eof");
+        assert_eq!(
+            redact_error_proxy_auth("tls handshake eof"),
+            "tls handshake eof"
+        );
     }
 
+    #[test]
+    fn media_user_agent_validation_rejects_header_injection() {
+        assert_eq!(
+            validate_user_agent("Live Player/1.2").unwrap(),
+            "Live Player/1.2"
+        );
+        for invalid in ["bad\nua", "bad\r\nX-Injected: yes", "bad\u{7f}ua"] {
+            assert!(validate_user_agent(invalid).is_err());
+        }
+        assert!(validate_user_agent(&"x".repeat(MAX_MEDIA_USER_AGENT_LEN + 1)).is_err());
+        assert!(validate_user_agent("").is_err());
+    }
     #[test]
     fn proxy_probe_checks_feed_envelope_instead_of_http_status_only() {
         let valid = json!({"status": 1, "data": {"items": [{"id": 1, "title": "fixture"}], "pagination": {"page": 1, "size": 1, "pages": 1, "total": 1}}});
         assert!(healthy_proxy_response(200, valid.to_string().as_bytes()));
         assert!(!healthy_proxy_response(403, valid.to_string().as_bytes()));
-        for body in [b"<html>homepage</html>".as_slice(), br#"{"status":0,"data":{}}"#, br#"{"status":1,"data":[]}"#, br#"{"status":1,"data":{"items":[],"pagination":{}}}"#] {
+        for body in [
+            b"<html>homepage</html>".as_slice(),
+            br#"{"status":0,"data":{}}"#,
+            br#"{"status":1,"data":[]}"#,
+            br#"{"status":1,"data":{"items":[],"pagination":{}}}"#,
+        ] {
             assert!(!healthy_proxy_response(200, body));
         }
     }
@@ -1489,16 +1719,26 @@ mod tests {
     #[test]
     fn proxy_cache_identity_changes_with_mode_and_address_without_exposing_secrets() {
         let target = url::Url::parse("https://example.com/").unwrap();
-        let custom = crate::proxy::Config::for_test("custom", "http://name:{{PASSWORD_pp0rajep}}@127.0.0.1:7897").unwrap();
+        let custom = crate::proxy::Config::for_test(
+            "custom",
+            "http://name:{{PASSWORD_pp0rajep}}@127.0.0.1:7897",
+        )
+        .unwrap();
         let route = ProxyRoute::for_config(&custom, &target);
         let first = client_key(true, "example.com", 443, false, &route);
         assert!(!first.contains("{{PASSWORD_pp0rajep}}"));
         assert_eq!(route.label(), "http://127.0.0.1:7897");
-        for config in [crate::proxy::Config::for_test("off", "").unwrap(), crate::proxy::Config::for_test("custom", "http://127.0.0.1:7898").unwrap()] {
+        for config in [
+            crate::proxy::Config::for_test("off", "").unwrap(),
+            crate::proxy::Config::for_test("custom", "http://127.0.0.1:7898").unwrap(),
+        ] {
             let changed = ProxyRoute::for_config(&config, &target);
             assert_ne!(first, client_key(true, "example.com", 443, false, &changed));
         }
-        assert!(!ProxyRoute::for_config(&crate::proxy::Config::for_test("off", "").unwrap(), &target).active);
+        assert!(
+            !ProxyRoute::for_config(&crate::proxy::Config::for_test("off", "").unwrap(), &target)
+                .active
+        );
     }
 
     #[tokio::test]
@@ -1508,29 +1748,53 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let serving = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut request = String::new(); reader.read_line(&mut request).unwrap();
-            let mut length = 0; let mut auth = false;
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            let mut length = 0;
+            let mut auth = false;
             loop {
-                let mut line = String::new(); reader.read_line(&mut line).unwrap();
-                if line.trim().is_empty() { break; }
-                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") { length = value.trim().parse::<usize>().unwrap(); }
-                if line.to_ascii_lowercase().starts_with("authorization:") { auth = true; }
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line.trim().is_empty() {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse::<usize>().unwrap();
+                }
+                if line.to_ascii_lowercase().starts_with("authorization:") {
+                    auth = true;
+                }
             }
-            let mut body = vec![0; length]; reader.read_exact(&mut body).unwrap();
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
             let data = json!({"status":1,"data":{"items":[],"pagination":{"page":1,"size":1,"pages":0,"total":0}}}).to_string();
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{data}", data.len()).unwrap();
-            (request, serde_json::from_slice::<Value>(&body).unwrap(), auth)
+            (
+                request,
+                serde_json::from_slice::<Value>(&body).unwrap(),
+                auth,
+            )
         });
         let before = crate::proxy::snapshot();
-        let config = crate::proxy::Config::for_test("custom", &format!("http://{address}")).unwrap();
+        let config =
+            crate::proxy::Config::for_test("custom", &format!("http://{address}")).unwrap();
         // Host has no DNS record; only the explicitly supplied HTTP proxy can answer.
-        let result = probe_proxy_origin("http://unresolved.fixture.invalid", &config, false).await.unwrap();
+        let result = probe_proxy_origin("http://unresolved.fixture.invalid", &config, false)
+            .await
+            .unwrap();
         assert_eq!(result["ok"], true);
         let (request, body, auth) = serving.join().unwrap();
-        assert!(request.starts_with("POST http://unresolved.fixture.invalid/api/edge/request HTTP/1.1"));
-        assert_eq!(body, json!({"method":"GET","path":"/api/videos?page=1&size=1","body":"","content_type":""}));
+        assert!(
+            request.starts_with("POST http://unresolved.fixture.invalid/api/edge/request HTTP/1.1")
+        );
+        assert_eq!(
+            body,
+            json!({"method":"GET","path":"/api/videos?page=1&size=1","body":"","content_type":""})
+        );
         assert!(!auth);
         assert!(crate::proxy::snapshot() == before);
     }
@@ -1550,12 +1814,23 @@ mod tests {
             .unwrap();
         refresh_client();
         CLIENTS.lock().unwrap().insert(
-            client_key(network_policy::strict_security(), host, port, false, &ProxyRoute::for_config(&crate::proxy::snapshot(), &target)),
+            client_key(
+                network_policy::strict_security(),
+                host,
+                port,
+                false,
+                &ProxyRoute::for_config(&crate::proxy::snapshot(), &target),
+            ),
             (Instant::now() + CLIENT_TTL, Arc::new(failed_client)),
         );
-        let (_, bytes) = fetch_bytes(&raw).await.expect("备用 DNS 应恢复真实媒体下载");
+        let (_, bytes) = fetch_bytes(&raw)
+            .await
+            .expect("备用 DNS 应恢复真实媒体下载");
         assert!(!bytes.is_empty());
-        assert!(MEDIA_DNS_ROUTES.lock().unwrap().prefers_public(host, Instant::now()));
+        assert!(MEDIA_DNS_ROUTES
+            .lock()
+            .unwrap()
+            .prefers_public(host, Instant::now()));
         let (_, again) = fetch_bytes(&raw).await.expect("后续请求应复用恢复的路径");
         if bytes.starts_with(b"#EXTM3U") {
             assert!(again.starts_with(b"#EXTM3U"));
@@ -1826,7 +2101,10 @@ mod tests {
             Some("https://legacy-mirror.invalid".into())
         );
         assert!(!trusted_auth_origin("https://legacy-mirror.invalid"));
-        assert_eq!(persisted_base(r#"{"base":"https://huangguoai.com/"}"#), Some(DEFAULT_BASE.into()));
+        assert_eq!(
+            persisted_base(r#"{"base":"https://huangguoai.com/"}"#),
+            Some(DEFAULT_BASE.into())
+        );
         for raw in [
             "invalid",
             r#"{"base":123}"#,
@@ -1851,26 +2129,52 @@ mod tests {
             assert_eq!(config.base, "https://mirror.fixture.invalid");
             assert!(!config.custom);
         }
-        assert!(persisted_line(r#"{"v":2,"base":"https://mirror.fixture.invalid/","custom":true}"#).unwrap().custom);
-        assert!(!persisted_line(r#"{"v":2,"base":"https://huangguoai.com","custom":true}"#).unwrap().custom);
+        assert!(
+            persisted_line(r#"{"v":2,"base":"https://mirror.fixture.invalid/","custom":true}"#)
+                .unwrap()
+                .custom
+        );
+        assert!(
+            !persisted_line(r#"{"v":2,"base":"https://huangguoai.com","custom":true}"#)
+                .unwrap()
+                .custom
+        );
     }
 
     #[test]
     fn custom_line_round_trip_and_failed_save_preserve_previous_selection() {
-        let dir = std::env::temp_dir().join(format!("hghubx-line-save-{}-{}", std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let dir = std::env::temp_dir().join(format!(
+            "hghubx-line-save-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("line.json");
-        let next = LineConfig { base: "https://mirror.fixture.invalid".into(), custom: true };
+        let next = LineConfig {
+            base: "https://mirror.fixture.invalid".into(),
+            custom: true,
+        };
         let mut current = LineConfig::default();
         save_line(&mut current, next.clone(), Some(&path)).unwrap();
-        assert_eq!(persisted_line(&std::fs::read_to_string(&path).unwrap()), Some(next.clone()));
+        assert_eq!(
+            persisted_line(&std::fs::read_to_string(&path).unwrap()),
+            Some(next.clone())
+        );
         let failed_path = dir.join("missing").join("line.json");
         assert!(save_line(&mut current, LineConfig::default(), Some(&failed_path)).is_err());
         assert_eq!(current, next);
-        assert_eq!(persisted_line(&std::fs::read_to_string(&path).unwrap()), Some(next));
+        assert_eq!(
+            persisted_line(&std::fs::read_to_string(&path).unwrap()),
+            Some(next)
+        );
         save_line(&mut current, LineConfig::default(), Some(&path)).unwrap();
-        assert_eq!(persisted_line(&std::fs::read_to_string(&path).unwrap()), Some(LineConfig::default()));
+        assert_eq!(
+            persisted_line(&std::fs::read_to_string(&path).unwrap()),
+            Some(LineConfig::default())
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
