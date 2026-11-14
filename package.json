@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && tsc --project tsconfig.tests.json && vite build",
     "preview": "vite preview",
+    "test:tvbox": "node scripts/test-tvbox.mjs",
     "test:playback": "node scripts/test-playback.mjs",
     "test:api-loading": "node scripts/test-api-loading.mjs",
     "test:channel-pagination": "node scripts/test-channel-pagination.mjs",
