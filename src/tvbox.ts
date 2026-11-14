@@ -7,6 +7,7 @@ const ACTIVE_KEY = "hghubx_tvbox_active_v1";
 export const TVBOX_SOURCE_EVENT = "hghubx:tvbox-source-changed";
 
 export type TVBoxSource = { id: string; name: string; url: string };
+export type TVBoxRepository = { name: string; url: string };
 export type TVBoxCategory = { id: string; name: string };
 export type TVBoxEpisode = { name: string; url: string };
 export type TVBoxPlayGroup = { name: string; episodes: TVBoxEpisode[] };
@@ -71,6 +72,14 @@ function payloadRoot(value: unknown): Record<string, unknown> {
   const root = record(value) ?? {};
   const data = record(root.data);
   return data && (Array.isArray(data.list) || Array.isArray(data.class) || Array.isArray(data.vod)) ? data : root;
+}
+
+function assertTVBoxApiPayload(value: unknown): void {
+  const root = record(value);
+  const data = record(root?.data);
+  const valid = [root, data].some(candidate => candidate !== null
+    && (Array.isArray(candidate.list) || Array.isArray(candidate.vod) || Array.isArray(candidate.class)));
+  if (!valid) throw new Error("不是受支持的标准 JSON API 响应：必须包含 list、vod 或 class 数组；Spider/脚本源暂不支持");
 }
 
 function listFrom(value: unknown): unknown[] {
@@ -226,20 +235,40 @@ export function parseTVBoxPage(value: unknown, source: TVBoxSource): TVBoxPage {
 
 export async function tvboxList(source: TVBoxSource, page = 1, category = ""): Promise<TVBoxPage> {
   const data = await fetchTVBoxJson(buildTVBoxApiUrl(source, { ac: "list", pg: Math.max(1, page), t: category || undefined }));
+  assertTVBoxApiPayload(data);
   return parseTVBoxPage(data, source);
 }
 
 export async function tvboxSearch(source: TVBoxSource, keyword: string, page = 1, category = ""): Promise<TVBoxPage> {
   const data = await fetchTVBoxJson(buildTVBoxApiUrl(source, { ac: "list", pg: Math.max(1, page), t: category || undefined, wd: keyword || undefined }));
+  assertTVBoxApiPayload(data);
   return parseTVBoxPage(data, source);
 }
 
 export async function tvboxDetail(source: TVBoxSource, vodId: string): Promise<TVBoxVod> {
   const data = await fetchTVBoxJson(buildTVBoxApiUrl(source, { ac: "detail", ids: vodId }));
+  assertTVBoxApiPayload(data);
   const raw = listFrom(data)[0] ?? record(payloadRoot(data))?.vod ?? null;
   const video = normalizeVod(raw, source);
   if (!video) throw new Error("TVBox 源没有返回有效影片详情");
   return video;
+}
+
+/** Prefer explicit media over embedded player pages; no source code or parser is run. */
+export function preferredTVBoxLine(video: TVBoxVod | undefined): number {
+  const groups = video?.playGroups ?? [];
+  const direct = groups.findIndex(group => {
+    const raw = group.episodes[0]?.url;
+    if (!raw) return false;
+    try {
+      const url = new URL(raw);
+      return /\.(?:m3u8|mp4|m4v|mov|webm)$/i.test(url.pathname)
+        || ["format", "type", "mime"].some(key => /^(?:m3u8|hls|mp4|m4v|video\/mp4|application\/(?:vnd\.apple\.mpegurl|x-mpegurl))$/i.test(url.searchParams.get(key) ?? ""));
+    } catch { return false; }
+  });
+  if (direct >= 0) return direct;
+  const hinted = groups.findIndex(group => /m3u8|hls|mp4/i.test(group.name) && group.episodes.length > 0);
+  return hinted >= 0 ? hinted : 0;
 }
 
 export function tvboxMediaUrl(video: TVBoxVod | undefined, episode: number, groupIndex = 0): string {
@@ -331,10 +360,37 @@ function siteEntries(value: unknown): { name: string; url: string; type: string 
   });
 }
 
+/** Parse only the shallow `urls` repository index; entries are never fetched or executed. */
+export function parseTVBoxRepositories(value: unknown, baseUrl: string): TVBoxRepository[] {
+  const root = record(value);
+  const data = record(root?.data);
+  const rawUrls = [
+    ...(Array.isArray(root?.urls) ? root.urls : []),
+    ...(Array.isArray(data?.urls) ? data.urls : []),
+  ];
+  let base: URL;
+  try { base = new URL(baseUrl); } catch { return []; }
+  if (base.protocol !== "http:" && base.protocol !== "https:") return [];
+  const seen = new Set<string>();
+  return rawUrls.flatMap((entry): TVBoxRepository[] => {
+    const item = record(entry);
+    const raw = item && text(item.url);
+    if (!raw) return [];
+    try {
+      const url = new URL(raw, base);
+      if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password || url.hash) return [];
+      const normalized = url.toString();
+      if (seen.has(normalized)) return [];
+      seen.add(normalized);
+      return [{ name: text(item.name) || url.host, url: normalized }];
+    } catch { return []; }
+  }).slice(0, 100);
+}
+
 export function parseTVBoxConfig(value: unknown): { sites: { name: string; url: string }[]; spiderSkipped: number } {
   const entries = siteEntries(value);
-  const sites = entries.filter(site => /^https?:\/\//i.test(site.url) && !/csp_|spider|\.js(?:$|\?)/i.test(site.url)
-    && (!site.type || ["0", "1"].includes(site.type)));
+  const sites = entries.filter(site => /^https?:\/\//i.test(site.url) && !/csp_|spider|\.(?:js|mjs|py|jar)(?:$|[?#])/i.test(site.url)
+    && (!site.type || site.type === "1"));
   return {
     sites: sites.map(({ name, url }) => ({ name, url })),
     spiderSkipped: entries.length - sites.length,
@@ -342,12 +398,20 @@ export function parseTVBoxConfig(value: unknown): { sites: { name: string; url: 
 }
 
 /** Import a TVBox config JSON by adding only HTTP(S) API sites; Spider entries are skipped. */
-export async function importTVBoxSources(rawUrl: string, fallbackName = ""): Promise<{ sources: TVBoxSource[]; spiderSkipped: number }> {
+export async function importTVBoxSources(rawUrl: string, fallbackName = ""): Promise<{ sources: TVBoxSource[]; spiderSkipped: number; repositories?: TVBoxRepository[] }> {
   const url = normalizeSourceUrl(rawUrl);
   const raw = await fetchTVBoxJson(url);
+  const repositories = parseTVBoxRepositories(raw, url);
+  if (repositories.length) return { sources: [], spiderSkipped: 0, repositories };
   const config = parseTVBoxConfig(raw);
   const spiderSkipped = config.spiderSkipped;
   let candidates = config.sites;
+  const root = record(raw);
+  const data = record(root?.data);
+  const hasSites = Array.isArray(root?.sites) || Array.isArray(data?.sites);
+  if (hasSites && !candidates.length) {
+    throw new Error("该配置没有标准 JSON API；Spider、JS、Python、JAR 及 XML 源当前不支持，不会执行脚本");
+  }
   if (!candidates.length) {
     const direct: TVBoxSource = { id: randomId(), name: fallbackName.trim() || new URL(url).host, url };
     // Verify the endpoint uses the standard JSON list contract, without requiring content to exist.
