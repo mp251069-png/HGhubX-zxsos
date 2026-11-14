@@ -8,7 +8,7 @@ import type { TVBoxSource, TVBoxVideo } from "./tvbox";
 export type Platform = "android" | "ios" | "windows" | "macos" | "linux";
 export type Theme = "dark" | "light";
 export type ThemePreference = Theme | "system";
-export type Tab = "home" | "search" | "category" | "profile";
+export type Tab = "home" | "search" | "category" | "tvbox" | "profile";
 
 /** 播放页上下文：ids 是来源列表，index 是当前条目。 */
 export type FeedContext = {

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { cover } from "./api";
+import { cover, directMedia, playlist } from "./api";
 import type { Detail, Episode, VideoCard } from "./types";
 
 const SOURCES_KEY = "hghubx_tvbox_sources_v1";
@@ -119,7 +119,9 @@ function normalizeVod(value: unknown, source: TVBoxSource): TVBoxVod | null {
   const id = text(item.vod_id ?? item.id);
   const title = text(item.vod_name ?? item.title ?? item.name);
   if (!id || !title) return null;
-  const mediaBase = `${new URL(source.url).origin}/`;
+  // Resolve paths against the configured endpoint, not only its origin; some APIs
+  // place relative media and poster URLs beneath their own directory.
+  const mediaBase = source.url;
   const playFrom = text(item.vod_play_from).split("$$$");
   const playUrl = text(item.vod_play_url).split("$$$");
   const playGroups = playUrl.map((rawGroup, index) => {
@@ -205,8 +207,10 @@ export function tvboxDetailModel(video: TVBoxVod, source: TVBoxSource, groupInde
 
 export function parseTVBoxPage(value: unknown, source: TVBoxSource): TVBoxPage {
   const root = payloadRoot(value);
-  const page = Math.max(1, number(root.page, 1));
-  const rawPages = number(root.pagecount ?? root.page_count ?? root.pages, 1);
+  const envelope = record(value) ?? {};
+  const page = Math.max(1, number(root.page ?? envelope.page, 1));
+  const rawPages = number(root.pagecount ?? root.page_count ?? root.pages
+    ?? envelope.pagecount ?? envelope.page_count ?? envelope.pages, 1);
   const items = listFrom(value).flatMap((entry) => {
     const video = normalizeVod(entry, source);
     return video ? [{ ...video, localId: stableLocalId(source.id, video.id) }] : [];
@@ -216,7 +220,7 @@ export function parseTVBoxPage(value: unknown, source: TVBoxSource): TVBoxPage {
     categories: categoryList(value),
     page,
     pages: Math.max(1, rawPages),
-    total: number(root.total, items.length),
+    total: number(root.total ?? envelope.total, items.length),
   };
 }
 
@@ -245,6 +249,21 @@ export function tvboxMediaUrl(video: TVBoxVod | undefined, episode: number, grou
   const url = new URL(entry.url);
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("只支持 HTTP(S) 视频地址");
   return url.toString();
+}
+
+/** Build a local player URL: direct MP4-family files use /seg; HLS (including
+ * extensionless playlist endpoints) stays on /hls so nested playlists are rewritten. */
+export function tvboxPlaybackSource(raw: string): string {
+  const url = new URL(raw);
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("只支持 HTTP(S) 视频地址");
+  const path = url.pathname.toLowerCase();
+  const declaredMp4 = ["format", "type", "mime"].some(key => {
+    const value = (url.searchParams.get(key) ?? "").toLowerCase();
+    return value === "mp4" || value === "video/mp4" || value === "m4v";
+  });
+  return /\.(?:mp4|m4v|mov|webm)$/.test(path) || declaredMp4
+    ? directMedia(url.toString())
+    : playlist(url.toString());
 }
 
 function normalizeSourceUrl(raw: string): string {
