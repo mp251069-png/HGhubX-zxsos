@@ -632,6 +632,62 @@ mod tests {
         assert!(seg.body().len() > 1000);
     }
 
+    /// Opt-in real source check. No source URL or query tokens are printed.
+    #[tokio::test]
+    #[ignore = "联网测试：显式设置 TVBOX_LIVE_HLS_URL 后运行"]
+    async fn live_tvbox_hls_chain() {
+        let url = std::env::var("TVBOX_LIVE_HLS_URL").expect("set TVBOX_LIVE_HLS_URL");
+        let query = format!("u={}", enc(&url));
+        let probe = handle(
+            "/hls/playlist.m3u8",
+            &query,
+            LOCAL_ORIGIN,
+            Some("bytes=0-7"),
+        )
+        .await;
+        assert_eq!(probe.status(), StatusCode::PARTIAL_CONTENT);
+        assert!(probe.headers().contains_key("Content-Range"));
+        assert!(probe.body().starts_with(b"#EXTM3U"));
+        let mut response = handle("/hls/playlist.m3u8", &query, LOCAL_ORIGIN, None).await;
+        for depth in 0..4 {
+            assert_eq!(response.status(), StatusCode::OK, "playlist depth {depth}");
+            let text = std::str::from_utf8(response.body()).expect("UTF-8 playlist");
+            assert!(text.starts_with("#EXTM3U"), "expected an HLS playlist");
+            let next = text
+                .lines()
+                .find(|line| !line.is_empty() && !line.starts_with('#'))
+                .expect("playlist must contain a resource");
+            let next = url::Url::parse(next).expect("absolute proxied URL");
+            assert_eq!(
+                next.origin(),
+                url::Url::parse(LOCAL_ORIGIN).unwrap().origin()
+            );
+            let next_query = next.query().expect("proxied query").to_owned();
+            let is_master = text.contains("#EXT-X-STREAM-INF");
+            response = handle(
+                next.path(),
+                &next_query,
+                LOCAL_ORIGIN,
+                if is_master {
+                    None
+                } else {
+                    Some("bytes=0-1023")
+                },
+            )
+            .await;
+            if !is_master {
+                assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+                assert!(response.headers().contains_key("Content-Range"));
+                assert_eq!(response.body().len(), 1024);
+                println!(
+                    "PASS TVBox HLS: manifest probe, nested playlists, media 206 (1024 bytes)"
+                );
+                return;
+            }
+        }
+        panic!("too many nested master playlists");
+    }
+
     /// 离线回归：不再依赖带 auth_key 时效的真实上游地址（旧地址已过期，会 403）。
     /// 与真实播放列表同构：带签名的分片地址 + 加密 KEY + 相对路径分片。
     #[test]

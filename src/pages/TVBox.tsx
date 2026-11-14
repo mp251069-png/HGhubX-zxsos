@@ -132,7 +132,7 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="ios-page-title flex items-center gap-2"><IClapper size={22} />TVBox 影视</h1>
-            <p className="mt-1 text-[12px] text-mut">标准 JSON/API · 选片、搜索并播放</p>
+            <p className="mt-1 text-[12px] text-mut">标准 JSON/API 与隔离 JS Spider · 选片、搜索并播放</p>
           </div>
           <Button aria-label="管理 TVBox 源" onClick={() => push({ kind: "settings" })}
             className="ios-icon-button shrink-0"><ISettings size={19} /></Button>
@@ -152,7 +152,7 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
           <Surface role="region" aria-label="添加 TVBox 数据源" className="rounded-(--r-md) bg-s2 p-5 text-center">
             <div className="mx-auto grid size-12 place-items-center rounded-full bg-primary/15 text-primary"><IClapper size={23} /></div>
             <h2 className="mt-3 text-[16px] font-semibold text-on">先添加一个 TVBox 源</h2>
-            <p className="mt-2 text-[13px] leading-relaxed text-mut">添加标准 HTTP(S) JSON API 或导入配置后，这里会显示影视目录和分类。JavaScript Spider / 解析脚本不会运行。</p>
+            <p className="mt-2 text-[13px] leading-relaxed text-mut">支持标准 HTTP(S) JSON API，以及后端隔离执行的 HTTP(S) .js/.mjs Spider。JAR、Python、csp_drpy 等未知运行器不会执行；需要网页嗅探的播放也不支持。</p>
             <Button onClick={() => push({ kind: "settings" })}
               className="mt-4 h-10 w-full rounded-(--r-ctl) bg-primary px-4 text-[13px] font-semibold text-on-primary pressable">
               添加或导入 TVBox 源

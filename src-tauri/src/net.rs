@@ -402,7 +402,7 @@ fn cached_client(cache: &ClientCache, key: &str, now: Instant) -> Option<Arc<req
 /// 缓存按模式、主机和端口隔离；有效期内仅复用已经检查并固定地址的客户端。
 /// 到期后重新检查全部 DNS 答案，不使用旧连接绕过新的目标检查。
 async fn client_for(raw: &str) -> Result<(url::Url, Arc<reqwest::Client>), String> {
-    client_for_dns(raw, false).await
+    client_for_dns(raw, false, network_policy::strict_security()).await
 }
 
 /// Keep Apple's existing per-target NO_PROXY/per-scheme/system matching.
@@ -427,8 +427,7 @@ fn client_key(strict: bool, host: &str, port: u16, public_dns: bool, route: &Pro
     format!("{strict}:{host}:{port}:{public_dns}:{}:{:x}:{}", route.active, route.fingerprint(), route.generation)
 }
 
-async fn client_for_dns(raw: &str, public_dns: bool) -> Result<(url::Url, Arc<reqwest::Client>), String> {
-    let strict = network_policy::strict_security();
+async fn client_for_dns(raw: &str, public_dns: bool, strict: bool) -> Result<(url::Url, Arc<reqwest::Client>), String> {
     let target = network_policy::parse_target_with_mode(raw, strict)?;
     let host = target.host_str().ok_or("目标缺少主机名")?;
     let port = target.port_or_known_default().ok_or("目标端口无效")?;
@@ -487,25 +486,30 @@ pub async fn get(
     accept: Option<&str>,
     referer: Option<&str>,
 ) -> Result<reqwest::Response, String> {
-    get_with_dns(raw, timeout, accept, referer, false).await
+    get_with_dns(raw, timeout, accept, referer, false, network_policy::strict_security()).await
 }
 
+/// Strict GET for untrusted Spider code, independent of the global security toggle.
+pub async fn get_strict(raw: &str, timeout: Duration, accept: Option<&str>, referer: Option<&str>) -> Result<reqwest::Response, String> {
+    get_with_dns(raw, timeout, accept, referer, false, true).await
+}
 async fn get_with_dns(
     raw: &str,
     timeout: Duration,
     accept: Option<&str>,
     referer: Option<&str>,
     public_dns: bool,
+    strict: bool,
 ) -> Result<reqwest::Response, String> {
     tokio::time::timeout(timeout, async {
         let policy_error = |phase: &str, error: String| {
             crate::playback_log::record("network.target_failed", json!({"resource": crate::playback_log::resource_id(raw), "phase": phase, "error_kind": crate::playback_log::error_kind(&error)}));
             error
         };
-        let mut next = network_policy::parse_target(raw).map_err(|e| policy_error("parse", e))?;
+        let mut next = network_policy::parse_target_with_mode(raw, strict).map_err(|e| policy_error("parse", e))?;
         for hop in 0..=5 {
             let resolving = Instant::now();
-            let (target, http) = client_for_dns(next.as_str(), public_dns).await.map_err(|e| policy_error("dns_or_client", e))?;
+            let (target, http) = client_for_dns(next.as_str(), public_dns, strict).await.map_err(|e| policy_error("dns_or_client", e))?;
             crate::playback_log::record("network.target_ready", json!({"resource": crate::playback_log::resource_id(raw), "target_resource": crate::playback_log::resource_id(target.as_str()), "dns_or_client_ms": resolving.elapsed().as_millis() as u64, "hop": hop}));
             let mut request = http.get(target.clone()).timeout(timeout);
             if let Some(value) = accept {
@@ -526,7 +530,7 @@ async fn get_with_dns(
                 .get(reqwest::header::LOCATION)
                 .and_then(|h| h.to_str().ok())
                 .ok_or("重定向缺少有效 Location")?;
-            next = network_policy::redirect_target(&target, location).map_err(|e| policy_error("redirect", e))?;
+            next = network_policy::redirect_target_with_mode(&target, location, strict).map_err(|e| policy_error("redirect", e))?;
             crate::playback_log::record("network.redirect", json!({"resource": crate::playback_log::resource_id(raw), "from": crate::playback_log::resource_id(target.as_str()), "to": crate::playback_log::resource_id(next.as_str()), "status": response.status().as_u16(), "hop": hop + 1}));
         }
         Err("重定向次数超过限制".into())
@@ -1403,7 +1407,7 @@ pub async fn fetch_bytes(url: &str) -> Result<(Option<String>, Vec<u8>), String>
             let mut status = None;
             let mut headers_ms = None;
             let result = async {
-                let resp = get_with_dns(&url, Duration::from_secs(20), None, Some(&referer), using_public_dns).await?;
+                let resp = get_with_dns(&url, Duration::from_secs(20), None, Some(&referer), using_public_dns, network_policy::strict_security()).await?;
                 status = Some(resp.status().as_u16());
                 headers_ms = Some(started.elapsed().as_millis() as u64);
                 if !resp.status().is_success() {

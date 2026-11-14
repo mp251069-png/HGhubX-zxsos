@@ -6,7 +6,7 @@ const SOURCES_KEY = "hghubx_tvbox_sources_v1";
 const ACTIVE_KEY = "hghubx_tvbox_active_v1";
 export const TVBOX_SOURCE_EVENT = "hghubx:tvbox-source-changed";
 
-export type TVBoxSource = { id: string; name: string; url: string };
+export type TVBoxSource = { id: string; name: string; url: string; kind?: "js"; ext?: unknown };
 export type TVBoxRepository = { name: string; url: string };
 export type TVBoxCategory = { id: string; name: string };
 export type TVBoxEpisode = { name: string; url: string };
@@ -35,6 +35,10 @@ export type TVBoxPage = {
   total: number;
 };
 
+export function isTVBoxJsSource(source: TVBoxSource): boolean {
+  return source.kind === "js";
+}
+
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : null;
@@ -52,6 +56,24 @@ function number(value: unknown, fallback = 0): number {
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function decodeSpiderPayload(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try { return JSON.parse(value); } catch { return value; }
+}
+
+/** JS is executed only by the isolated backend runtime, never by WebView code. */
+export async function invokeTVBoxSpider(source: TVBoxSource, method: string, args: unknown[] = []): Promise<unknown> {
+  if (!isTVBoxJsSource(source)) throw new Error("当前源不是 JavaScript Spider");
+  try {
+    return decodeSpiderPayload(await invoke<unknown>("tvbox_spider", {
+      source: { url: source.url, ...(source.ext === undefined ? {} : { ext: source.ext }) }, method, args,
+    }));
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    throw new Error(typeof error === "string" ? error : "JS Spider 调用失败");
+  }
 }
 
 export function buildTVBoxApiUrl(source: TVBoxSource, params: Record<string, string | number | undefined>): string {
@@ -79,7 +101,7 @@ function assertTVBoxApiPayload(value: unknown): void {
   const data = record(root?.data);
   const valid = [root, data].some(candidate => candidate !== null
     && (Array.isArray(candidate.list) || Array.isArray(candidate.vod) || Array.isArray(candidate.class)));
-  if (!valid) throw new Error("不是受支持的标准 JSON API 响应：必须包含 list、vod 或 class 数组；Spider/脚本源暂不支持");
+  if (!valid) throw new Error("当前源不是标准 JSON API 响应；JS 源需作为脚本源导入");
 }
 
 function listFrom(value: unknown): unknown[] {
@@ -137,7 +159,7 @@ function normalizeVod(value: unknown, source: TVBoxSource): TVBoxVod | null {
     const episodes = rawGroup.split("#").flatMap((part, episodeIndex) => {
       const separator = part.indexOf("$");
       const rawUrl = separator >= 0 ? part.slice(separator + 1).trim() : part.trim();
-      const url = resolvedUrl(rawUrl, mediaBase);
+      const url = isTVBoxJsSource(source) ? rawUrl : resolvedUrl(rawUrl, mediaBase);
       if (!url) return [];
       const name = separator >= 0 ? part.slice(0, separator).trim() : `第 ${episodeIndex + 1} 集`;
       return [{ name: name || `第 ${episodeIndex + 1} 集`, url }];
@@ -234,18 +256,40 @@ export function parseTVBoxPage(value: unknown, source: TVBoxSource): TVBoxPage {
 }
 
 export async function tvboxList(source: TVBoxSource, page = 1, category = ""): Promise<TVBoxPage> {
+  if (isTVBoxJsSource(source)) {
+    const safePage = Math.max(1, page);
+    if (category) return parseTVBoxPage(
+      await invokeTVBoxSpider(source, "category", [category, safePage, true, {}]), source,
+    );
+    if (safePage > 1) return parseTVBoxPage(await invokeTVBoxSpider(source, "homeVod", [safePage]), source);
+    const home = await invokeTVBoxSpider(source, "home", [true]);
+    const homeVod = await invokeTVBoxSpider(source, "homeVod", [1]);
+    const homePage = parseTVBoxPage(home, source);
+    const vodPage = parseTVBoxPage(homeVod, source);
+    return { ...vodPage, categories: homePage.categories.length ? homePage.categories : vodPage.categories,
+      items: [...homePage.items, ...vodPage.items],
+      total: Math.max(homePage.total, vodPage.total, homePage.items.length + vodPage.items.length) };
+  }
   const data = await fetchTVBoxJson(buildTVBoxApiUrl(source, { ac: "list", pg: Math.max(1, page), t: category || undefined }));
   assertTVBoxApiPayload(data);
   return parseTVBoxPage(data, source);
 }
 
 export async function tvboxSearch(source: TVBoxSource, keyword: string, page = 1, category = ""): Promise<TVBoxPage> {
+  if (isTVBoxJsSource(source)) {
+    return parseTVBoxPage(await invokeTVBoxSpider(source, "search", [keyword, false, Math.max(1, page)]), source);
+  }
   const data = await fetchTVBoxJson(buildTVBoxApiUrl(source, { ac: "list", pg: Math.max(1, page), t: category || undefined, wd: keyword || undefined }));
   assertTVBoxApiPayload(data);
   return parseTVBoxPage(data, source);
 }
 
 export async function tvboxDetail(source: TVBoxSource, vodId: string): Promise<TVBoxVod> {
+  if (isTVBoxJsSource(source)) {
+    const video = normalizeVod(listFrom(await invokeTVBoxSpider(source, "detail", [vodId]))[0], source);
+    if (!video) throw new Error("JS Spider 没有返回有效影片详情");
+    return video;
+  }
   const data = await fetchTVBoxJson(buildTVBoxApiUrl(source, { ac: "detail", ids: vodId }));
   assertTVBoxApiPayload(data);
   const raw = listFrom(data)[0] ?? record(payloadRoot(data))?.vod ?? null;
@@ -290,6 +334,34 @@ export function tvboxMediaUrl(video: TVBoxVod | undefined, episode: number, grou
 
 /** Build a local player URL: direct MP4-family files use /seg; HLS (including
  * extensionless playlist endpoints) stays on /hls so nested playlists are rewritten. */
+function mediaUrlFromSpider(value: unknown): string {
+  const root = record(value);
+  const parse = root?.parse;
+  const jx = root?.jx;
+  if (parse === 1 || parse === "1" || jx === 1 || jx === "1"
+    || /parse|sniff/i.test(text(parse)) || /parse|sniff/i.test(text(jx))) {
+    throw new Error("该 JS Spider 返回需要嗅探/解析的播放页，当前不支持；不会加载网页执行");
+  }
+  const headers = root?.headers ?? root?.header ?? record(root?.data)?.headers ?? record(root?.data)?.header;
+  if ((record(headers) && Object.keys(headers as Record<string, unknown>).length > 0)
+    || (typeof headers === "string" && headers.trim())) {
+    throw new Error("该 JS Spider 返回了播放请求 headers，当前代理无法安全贯通；已拒绝");
+  }
+  const candidates = [value, root?.url, root?.url1, root?.playUrl, root?.video, record(root?.data)?.url, record(root?.data)?.playUrl];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    try { const url = new URL(candidate); if ((url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password) return url.toString(); } catch { /* next field */ }
+  }
+  if (candidates.some(candidate => typeof candidate === "string" && /https?:\/\/[^\s/]+:[^\s/@]+@/i.test(candidate))) {
+    throw new Error("播放地址包含账号密码，当前不支持");
+  }
+  throw new Error("JS Spider 未返回可直接播放的 HTTP(S) 媒体地址");
+}
+
+export async function tvboxResolveMedia(source: TVBoxSource, flag: string, id: string): Promise<string> {
+  return mediaUrlFromSpider(await invokeTVBoxSpider(source, "play", [flag, id, []]));
+}
+
 export function tvboxPlaybackSource(raw: string): string {
   const url = new URL(raw);
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("只支持 HTTP(S) 视频地址");
@@ -306,6 +378,29 @@ function normalizeSourceUrl(raw: string): string {
   return url.toString();
 }
 
+function normalizeJsEntry(raw: string, baseUrl = ""): string {
+  let url: URL;
+  try { url = new URL(raw, baseUrl || undefined); } catch { throw new Error("JS Spider 入口必须是 HTTP(S) 地址"); }
+  if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.hash || !/\.(?:js|mjs)$/i.test(url.pathname)) {
+    throw new Error("仅支持 HTTP(S) .js/.mjs Spider 入口；drpy/JAR/Python/XML 源不会执行");
+  }
+  return url.toString();
+}
+
+function normalizeSpiderExt(raw: unknown, baseUrl: string): unknown {
+  if (typeof raw !== "string") return raw;
+  const value = raw.trim();
+  if (!value || /^[\[{]/.test(value)) return raw;
+  if (/^https?:\/\//i.test(value) || value.startsWith("./") || value.startsWith("../") || value.startsWith("/")) {
+    try {
+      const url = new URL(value, baseUrl || undefined);
+      if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.hash) return raw;
+      return url.toString();
+    } catch { return raw; }
+  }
+  return raw;
+}
+
 function randomId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -317,7 +412,11 @@ export function loadTVBoxSources(): TVBoxSource[] {
     return parsed.flatMap((value) => {
       const item = record(value);
       if (!item || typeof item.id !== "string" || typeof item.name !== "string" || typeof item.url !== "string") return [];
-      try { return [{ id: item.id, name: item.name, url: normalizeSourceUrl(item.url) }]; } catch { return []; }
+      try {
+        const kind = item.kind === "js" ? "js" : undefined;
+        const url = kind ? normalizeJsEntry(item.url) : normalizeSourceUrl(item.url);
+        return [{ id: item.id, name: item.name, url, ...(kind ? { kind, ...(item.ext === undefined ? {} : { ext: item.ext }) } : {}) }];
+      } catch { return []; }
     });
   } catch {
     return [];
@@ -350,7 +449,7 @@ export function removeTVBoxSource(id: string): void {
   else window.dispatchEvent(new CustomEvent(TVBOX_SOURCE_EVENT, { detail: activeTVBoxSource() }));
 }
 
-function siteEntries(value: unknown): { name: string; url: string; type: string }[] {
+function siteEntries(value: unknown): { name: string; url: string; type: string; ext?: unknown }[] {
   const root = record(value) ?? {};
   const data = record(root.data);
   const sites = Array.isArray(root.sites) ? root.sites : Array.isArray(data?.sites) ? data!.sites as unknown[] : [];
@@ -358,7 +457,7 @@ function siteEntries(value: unknown): { name: string; url: string; type: string 
     const site = record(entry);
     const api = site && text(site.api);
     if (!api) return [];
-    try { return [{ name: text(site.name ?? site.key) || (/^https?:\/\//i.test(api) ? new URL(api).host : ""), url: api, type: text(site.type) }]; }
+    try { return [{ name: text(site.name ?? site.key) || (/^https?:\/\//i.test(api) ? new URL(api).host : ""), url: api, type: text(site.type), ext: site.ext }]; }
     catch { return []; }
   });
 }
@@ -390,30 +489,41 @@ export function parseTVBoxRepositories(value: unknown, baseUrl: string): TVBoxRe
   }).slice(0, 100);
 }
 
-export function parseTVBoxConfig(value: unknown): { sites: { name: string; url: string }[]; spiderSkipped: number } {
+export function parseTVBoxConfig(value: unknown, baseUrl = ""): { sites: Omit<TVBoxSource, "id">[]; spiderSkipped: number } {
   const entries = siteEntries(value);
-  const sites = entries.filter(site => /^https?:\/\//i.test(site.url) && !/csp_|spider|\.(?:js|mjs|py|jar)(?:$|[?#])/i.test(site.url)
-    && (!site.type || site.type === "1"));
+  const sites = entries.flatMap(site => {
+    if (!site.type || site.type === "1") {
+      try { return [{ name: site.name, url: normalizeSourceUrl(new URL(site.url, baseUrl || undefined).toString()) }]; } catch { return []; }
+    }
+    if (site.type === "3") {
+      try {
+        const jsUrl = normalizeJsEntry(site.url, baseUrl);
+        return [{ name: site.name, url: jsUrl, kind: "js" as const,
+          ...(site.ext === undefined ? {} : { ext: normalizeSpiderExt(site.ext, baseUrl) }) }];
+      } catch { return []; }
+    }
+    return [];
+  });
   return {
-    sites: sites.map(({ name, url }) => ({ name, url })),
+    sites,
     spiderSkipped: entries.length - sites.length,
   };
 }
 
-/** Import a TVBox config JSON by adding only HTTP(S) API sites; Spider entries are skipped. */
+/** Import a TVBox config JSON, including supported HTTP(S) JS/MJS Spider entries. */
 export async function importTVBoxSources(rawUrl: string, fallbackName = ""): Promise<{ sources: TVBoxSource[]; spiderSkipped: number; repositories?: TVBoxRepository[] }> {
   const url = normalizeSourceUrl(rawUrl);
   const raw = await fetchTVBoxJson(url);
   const repositories = parseTVBoxRepositories(raw, url);
   if (repositories.length) return { sources: [], spiderSkipped: 0, repositories };
-  const config = parseTVBoxConfig(raw);
+  const config = parseTVBoxConfig(raw, url);
   const spiderSkipped = config.spiderSkipped;
   let candidates = config.sites;
   const root = record(raw);
   const data = record(root?.data);
   const hasSites = Array.isArray(root?.sites) || Array.isArray(data?.sites);
   if (hasSites && !candidates.length) {
-    throw new Error("该配置没有标准 JSON API；Spider、JS、Python、JAR 及 XML 源当前不支持，不会执行脚本");
+    throw new Error("该配置没有可支持的标准 JSON API 或 catvod JS 入口；drpy/JAR/Python/XML 源不会执行");
   }
   if (!candidates.length) {
     const direct: TVBoxSource = { id: randomId(), name: fallbackName.trim() || new URL(url).host, url };
@@ -422,16 +532,25 @@ export async function importTVBoxSources(rawUrl: string, fallbackName = ""): Pro
     candidates = [{ name: direct.name, url: direct.url }];
   }
   const existing = loadTVBoxSources();
-  const seen = new Set(existing.map(source => source.url));
+  const stableExt = (value: unknown): string => {
+    if (value === undefined) return "";
+    try { return JSON.stringify(value); } catch { return String(value); }
+  };
+  const sourceKey = (source: Pick<TVBoxSource, "kind" | "url" | "ext">): string =>
+    `${source.kind || "api"}:${source.url}:${stableExt(source.ext)}`;
+  const seen = new Set(existing.map(sourceKey));
   const added = candidates.flatMap(candidate => {
     try {
-      const normalized = normalizeSourceUrl(candidate.url);
-      if (seen.has(normalized)) return [];
-      seen.add(normalized);
-      return [{ id: randomId(), name: candidate.name.trim() || new URL(normalized).host, url: normalized }];
+      const kind = candidate.kind;
+      const normalized = kind === "js" ? normalizeJsEntry(candidate.url) : normalizeSourceUrl(candidate.url);
+      const key = sourceKey({ kind, url: normalized, ext: candidate.ext });
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ id: randomId(), name: candidate.name.trim() || new URL(normalized).host, url: normalized,
+        ...(kind ? { kind, ...(candidate.ext === undefined ? {} : { ext: candidate.ext }) } : {}) }];
     } catch { return []; }
   });
-  if (!added.length) throw new Error("没有找到新的标准 JSON API 源；JS Spider 不会被导入");
+  if (!added.length) throw new Error("没有找到新的标准 JSON API 或 HTTP(S) JS/MJS Spider 源");
   const next = [...existing, ...added];
   saveTVBoxSources(next);
   if (!activeTVBoxSource()) selectTVBoxSource(added[0].id);

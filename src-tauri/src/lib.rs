@@ -20,6 +20,7 @@ mod playback_log;
 mod proxy;
 mod search_hot;
 mod session;
+mod spider;
 mod tvbox;
 
 use api::Api;
@@ -207,6 +208,7 @@ pub fn run() {
             api::debug_log,
             api::net_diag,
             api::tvbox_fetch,
+            api::tvbox_spider,
             api::line_state,
             api::line_set,
             api::line_custom_set,

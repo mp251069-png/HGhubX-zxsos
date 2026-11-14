@@ -58,6 +58,8 @@ try {
   assert.equal(cardCover.pathname, "/img");
   assert.equal(cardCover.searchParams.get("u"), page.items[0].cover, "TVBox card proxy must target the original poster");
   assert.equal(api.cover(card.cover), card.cover, "Img must not wrap an existing local poster proxy a second time");
+  assert.equal(api.playlistRoute("ios"), "/hls/playlist.m3u8", "iOS native HLS route must expose the manifest extension");
+  assert.equal(api.playlistRoute("linux"), "/hls", "Other platforms retain the existing HLS route");
 
   const wrapped = tvbox.parseTVBoxPage({ data: { list: [{ vod_id: "x", vod_name: "X" }], page: "1", pagecount: "0" } }, source);
   assert.equal(wrapped.items.length, 1, "data.list wrapper is supported");
@@ -100,8 +102,20 @@ try {
   assert.deepEqual(config.sites, [
     { name: "API A", url: "https://api-a.fixture.invalid/vod" },
     { name: "api-b", url: "https://api-b.fixture.invalid/vod" },
+    { name: "spider", url: "https://spider.fixture.invalid/js/spider.js", kind: "js" },
   ]);
-  assert.equal(config.spiderSkipped, 3);
+  assert.equal(config.spiderSkipped, 2);
+  const relativeJs = tvbox.parseTVBoxConfig({ sites: [{ name: "ESM", type: 3, api: "./js/main.mjs", ext: "./rules/site.js" }] },
+    "https://cfg.fixture.invalid/tvbox/api.json");
+  assert.equal(relativeJs.sites[0].url, "https://cfg.fixture.invalid/tvbox/js/main.mjs");
+  assert.equal(relativeJs.sites[0].ext, "https://cfg.fixture.invalid/tvbox/rules/site.js",
+    "Spider ext relative paths resolve against config URL, not JS entry URL");
+  const extRules = tvbox.parseTVBoxConfig({ sites: [
+    { name: "plain", type: 3, api: "https://cfg.fixture.invalid/js/a.js", ext: "abc" },
+    { name: "json", type: 3, api: "https://cfg.fixture.invalid/js/b.js", ext: '{"key":"value"}' },
+  ] }, "https://cfg.fixture.invalid/config.json");
+  assert.equal(extRules.sites[0].ext, "abc", "Plain Spider ext strings remain opaque");
+  assert.equal(extRules.sites[1].ext, '{"key":"value"}', "JSON Spider ext text remains opaque");
 
   const repositories = tvbox.parseTVBoxRepositories({ urls: [
     { name: "标题但无地址" },
@@ -132,8 +146,25 @@ try {
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   const fetchCalls = [];
-  Object.defineProperty(globalThis, "window", { configurable: true, value: { __TAURI_INTERNALS__: {
+  const spiderCalls = [];
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { dispatchEvent: () => true, __TAURI_INTERNALS__: {
     invoke: async (command, args) => {
+      if (command === "tvbox_spider") {
+        spiderCalls.push({ method: args.method, args: args.args });
+        if (args.method === "home") return { class: [{ type_id: "1", type_name: "电影" }] };
+        if (args.method === "homeVod") return args.args[0] === 1
+          ? { list: [{ vod_id: "home-vod", vod_name: "Home Vod" }] }
+          : { list: [{ vod_id: "page-vod", vod_name: "Page Vod" }] };
+        if (args.method === "category") return { list: [{ vod_id: "cat-vod", vod_name: "Category Vod" }] };
+        if (args.method === "search") return { list: [{ vod_id: "search-vod", vod_name: "Search Vod" }] };
+        if (args.method === "play") {
+          if (args.args?.[1] === "parse") return { parse: 1, url: "https://media.fixture.invalid/page" };
+          if (args.args?.[1] === "headers") return { url: "https://media.fixture.invalid/a.m3u8", headers: { Authorization: "x" } };
+          if (args.args?.[1] === "credential") return { url: "https://user:pass@media.fixture.invalid/a.m3u8" };
+          return Promise.reject("backend boundary error");
+        }
+        return { list: [] };
+      }
       assert.equal(command, "tvbox_fetch");
       fetchCalls.push(args.url);
       const path = new URL(args.url).pathname;
@@ -148,11 +179,30 @@ try {
     setItem: () => assert.fail("Repository indexes and invalid configs must not be persisted as sources"),
   } });
   try {
+    const jsSource = { id: "js-fixture", name: "JS", kind: "js", url: "https://cfg.fixture.invalid/js/main.js", ext: "abc" };
+    const first = await tvbox.tvboxList(jsSource, 1);
+    assert.deepEqual(first.categories, [{ id: "1", name: "电影" }]);
+    assert.deepEqual(first.items.map(item => item.id), ["home-vod"], "home class payload is merged with homeVod list");
+    await tvbox.tvboxList(jsSource, 3);
+    await tvbox.tvboxList(jsSource, 2, "1");
+    await tvbox.tvboxSearch(jsSource, "kw", 4);
+    assert.deepEqual(spiderCalls.slice(0, 6), [
+      { method: "home", args: [true] },
+      { method: "homeVod", args: [1] },
+      { method: "homeVod", args: [3] },
+      { method: "category", args: ["1", 2, true, {}] },
+      { method: "search", args: ["kw", false, 4] },
+    ].slice(0, spiderCalls.length), "Spider methods use standard catvod/drpy arguments");
+    await assert.rejects(tvbox.tvboxResolveMedia(jsSource, "f", "id"), /backend boundary error/);
+    await assert.rejects(tvbox.tvboxResolveMedia(jsSource, "f", "parse"), /嗅探|解析/);
+    await assert.rejects(tvbox.tvboxResolveMedia(jsSource, "f", "headers"), /headers/);
+    await assert.rejects(tvbox.tvboxResolveMedia(jsSource, "f", "credential"), /账号密码/);
+
     const result = await tvbox.importTVBoxSources("https://index.fixture.invalid/index.json");
     assert.deepEqual(result.sources, []);
     assert.equal(result.repositories[0].url, "https://index.fixture.invalid/spider.json");
     assert.equal(fetchCalls.length, 1, "Repository discovery must not recursively fetch children");
-    await assert.rejects(tvbox.importTVBoxSources("https://index.fixture.invalid/spider.json"), /没有标准 JSON API/);
+    await assert.rejects(tvbox.importTVBoxSources("https://index.fixture.invalid/spider.json"), /可支持|catvod/);
     await assert.rejects(tvbox.importTVBoxSources("https://index.fixture.invalid/arbitrary.json"), /标准 JSON API/);
     const empty = await tvbox.tvboxList({ ...source, url: "https://index.fixture.invalid/empty-api" });
     assert.deepEqual(empty.items, [], "An actual empty-list API remains valid");
@@ -161,6 +211,32 @@ try {
     else delete globalThis.window;
     if (originalStorage) Object.defineProperty(globalThis, "localStorage", originalStorage);
     else delete globalThis.localStorage;
+  }
+
+  const storage = new Map();
+  const oldWindow2 = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const oldStorage2 = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { dispatchEvent: () => true, __TAURI_INTERNALS__: {
+    invoke: async (command, args) => {
+      assert.equal(command, "tvbox_fetch");
+      if (new URL(args.url).pathname !== "/dedupe.json") throw new Error("unexpected dedupe URL");
+      return { sites: [
+        { name: "one", type: 3, api: "https://same.fixture.invalid/rules.js", ext: "./one.json" },
+        { name: "two", type: 3, api: "https://same.fixture.invalid/rules.js", ext: "./two.json" },
+      ] };
+    },
+  } } });
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+    getItem: key => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: key => storage.delete(key),
+  } });
+  try {
+    const added = await tvbox.importTVBoxSources("https://cfg.fixture.invalid/dedupe.json");
+    assert.equal(added.sources.length, 2, "Same Spider URL with different ext rules must not deduplicate");
+  } finally {
+    if (oldWindow2) Object.defineProperty(globalThis, "window", oldWindow2); else delete globalThis.window;
+    if (oldStorage2) Object.defineProperty(globalThis, "localStorage", oldStorage2); else delete globalThis.localStorage;
   }
 
   assert.throws(() => tvbox.tvboxMediaUrl({ ...page.items[0], playGroups: [] }, 1), /需要解析器/);

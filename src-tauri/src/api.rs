@@ -64,6 +64,12 @@ pub async fn tvbox_fetch(url: String) -> Result<Value, String> {
     crate::tvbox::fetch_json(&url).await
 }
 
+/// Run a JavaScript source in a fresh bounded interpreter, never in the WebView.
+#[tauri::command]
+pub async fn tvbox_spider(source: Value, method: String, args: Value) -> Result<Value, String> {
+    crate::spider::call(source, method, args).await
+}
+
 /* ───────────────────────── 线路（数据源） ───────────────────────── */
 // Network probes run without holding this lock. Manual selection/cancellation
 // invalidates older probes; applying a result is serialized with manual writes.

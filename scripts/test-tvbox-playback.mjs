@@ -84,6 +84,17 @@ try {
       if (command === "app_boot") return Promise.resolve({ user: null, logged_in: false, base: "http://fixture.invalid" });
       if (command === "debug_log" || command === "playback_log" || command === "set_text_interaction") return Promise.resolve();
       if (command === "tvbox_fetch") return fetch(String(args.url)).then(response => response.ok ? response.json() : Promise.reject(`HTTP ${response.status}`));
+      if (command === "tvbox_spider") {
+        const method = args.method;
+        if (method === "home") return Promise.resolve({ class: [{ type_id: "1", type_name: "Fixture" }] });
+        if (method === "homeVod") return Promise.resolve({ list: [{ vod_id: "opaque-vod-1", vod_name: "JS Spider MP4" }] });
+        if (method === "detail") return Promise.resolve({ list: [{ vod_id: "opaque-vod-1", vod_name: "JS Spider MP4", vod_play_from: "fixture", vod_play_url: "第1集$opaque-episode-1" }] });
+        if (method === "play") {
+          if (args.args?.[1] !== "opaque-episode-1") return Promise.reject("unexpected opaque episode id");
+          return Promise.resolve({ url: `${mp4Origin}/tvbox-playback-sample.mp4` });
+        }
+        return Promise.resolve({ list: [] });
+      }
       return Promise.reject(`Unexpected IPC: ${command}`);
     } };
     window.__tvboxPlaybackOrigins = { apiOrigin, mp4Origin };
@@ -100,6 +111,8 @@ try {
   const page = await context.newPage();
   const pageErrors = [];
   page.on("pageerror", error => pageErrors.push(error.message));
+  const standardCaseStart = requests.length;
+  const standardExternalStart = external.length;
   await page.goto(`${uiOrigin}/tests/tvbox-playback.html?api=${encodeURIComponent(`${mediaOrigin}/api.php/provide/vod/`)}`);
   await page.waitForFunction(() => window.tvboxPlaybackFixture?.state === "ready");
   await page.waitForSelector("video");
@@ -110,19 +123,39 @@ try {
   assert.equal(result.paused, false, "VideoSurface must actually be playing");
   assert(result.currentTime > 0.5, `currentTime did not advance: ${result.currentTime}`);
   assert(result.duration > 1, `MP4 duration unavailable: ${result.duration}`);
-  assert(requests.some(request => request.path === "/seg"), "Range media service must receive /seg");
-  assert(requests.some(request => request.path === "/seg" && request.method === "GET"), "Media must be fetched through GET /seg");
-  assert(requests.some(request => request.path === "/seg" && request.range?.startsWith("bytes=")), "Actual playback must make a byte-range media request");
-  assert(requests.some(request => request.path === "/api.php/provide/vod/" && new URLSearchParams(request.query).get("ac") === "detail"), "Feed must request standard TVBox details");
-  assert(!requests.some(request => request.path === "/hls"), "Direct MP4 must never enter the HLS proxy");
+  const standardRequests = requests.slice(standardCaseStart);
+  assert(standardRequests.some(request => request.path === "/seg"), "Range media service must receive /seg");
+  assert(standardRequests.some(request => request.path === "/seg" && request.method === "GET"), "Media must be fetched through GET /seg");
+  assert(standardRequests.some(request => request.path === "/seg" && request.range?.startsWith("bytes=")), "Actual playback must make a byte-range media request");
+  assert(standardRequests.some(request => request.path === "/api.php/provide/vod/" && new URLSearchParams(request.query).get("ac") === "detail"), "Feed must request standard TVBox details");
+  assert(!standardRequests.some(request => request.path === "/hls"), "Direct MP4 must never enter the HLS proxy");
+  assert.deepEqual(external.slice(standardExternalStart), [], "Standard case must make no external network requests");
   assert.deepEqual(pageErrors, [], "Browser script errors");
   assert.deepEqual(external, [], "No real third-party network requests");
-  report.cases.push({ name: "standard-tvbox-detail-to-mp4", status: "passed", result, requests: requests.filter(request => request.path === "/seg" || request.path.includes("/api.php")) });
+  report.cases.push({ name: "standard-tvbox-detail-to-mp4", status: "passed", result, requests: standardRequests.filter(request => request.path === "/seg" || request.path.includes("/api.php")) });
   await page.screenshot({ path: join(output, "final.png") });
   console.log(`PASS standard-tvbox-detail-to-mp4: ${JSON.stringify(result)}`);
+  const jsCaseStart = requests.length;
+  const jsExternalStart = external.length;
+  await page.goto(`${uiOrigin}/tests/tvbox-playback.html?js=1`);
+  await page.waitForFunction(() => window.tvboxPlaybackFixture?.state === "ready");
+  await page.waitForSelector("video");
+  await page.waitForFunction(() => document.querySelector("video")?.currentTime > 0.5, undefined, { timeout: 20000 });
+  const jsResult = await page.locator("video").evaluate(video => ({ src: video.src, paused: video.paused, currentTime: video.currentTime, duration: video.duration }));
+  assert(jsResult.src.includes("/seg?u="), `Expected JS direct /seg source, got ${jsResult.src}`);
+  assert.equal(jsResult.paused, false, "JS Spider video must actually be playing");
+  assert(jsResult.currentTime > 0.5, `JS currentTime did not advance: ${jsResult.currentTime}`);
+  assert(jsResult.duration > 1, `JS MP4 duration unavailable: ${jsResult.duration}`);
+  const jsRequests = requests.slice(jsCaseStart);
+  assert(jsRequests.some(request => request.path === "/seg" && request.method === "GET" && request.range?.startsWith("bytes=")), "JS playback must make a byte-range /seg GET");
+  assert(!jsRequests.some(request => request.path === "/hls"), "JS direct MP4 must never enter the HLS proxy");
+  assert.deepEqual(external.slice(jsExternalStart), [], "JS case must make no external network requests");
+  assert.deepEqual(pageErrors, [], "Browser script errors in JS Spider case");
+  report.cases.push({ name: "js-spider-opaque-id-to-mp4", status: "passed", result: jsResult, requests: jsRequests.filter(request => request.path === "/seg") });
+  console.log(`PASS js-spider-opaque-id-to-mp4: ${JSON.stringify(jsResult)}`);
   await context.close();
 } catch (error) {
-  report.cases.push({ name: "standard-tvbox-detail-to-mp4", status: "failed", error: String(error.stack || error), requests });
+  report.cases.push({ name: "tvbox-playback-suite", status: "failed", error: String(error.stack || error), requests });
   console.error(String(error.stack || error));
   process.exitCode = 1;
 } finally {

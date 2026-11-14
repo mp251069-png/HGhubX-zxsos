@@ -15,7 +15,7 @@ import { setBackHandler } from "../back";
 import { copyText } from "../clipboard";
 import { tracePlayback } from "../playbackDiagnostics";
 import { createPlaybackClock } from "../playbackClock";
-import { preferredTVBoxLine, tvboxDetail, tvboxDetailModel, tvboxMediaUrl, tvboxPlaybackSource, tvboxVideoCard, type TVBoxSource, type TVBoxVideo, type TVBoxVod } from "../tvbox";
+import { preferredTVBoxLine, tvboxDetail, tvboxDetailModel, tvboxMediaUrl, tvboxPlaybackSource, tvboxResolveMedia, tvboxVideoCard, type TVBoxSource, type TVBoxVideo, type TVBoxVod } from "../tvbox";
 import {
   IBack, IBoltF, IChevR, IChevronDown, IChevronUp, IClose, ICommentF, ICompress, IExpand, IFileText, IHeart, IHeartF,
   ILink, IList, ILockF, IPauseF, IPlayF, ISearch, IStar, IStarF, IVertSwap, IVol, IVolMute,
@@ -377,7 +377,13 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     if (tvboxSource && tvboxItems) {
       const video = tvboxDetails[curId];
       if (!video) return () => { alive = false; };
-      try {
+      if (tvboxSource.kind === "js") {
+        const requestKey = playKey;
+        const episode = video.playGroups[tvboxLine]?.episodes[curEp - 1];
+        tvboxResolveMedia(tvboxSource, video.playGroups[tvboxLine]?.name || "", episode?.url || "")
+          .then(streamUrl => { if (alive && requestKey === playKey) { setPlayUrls(current => ({ ...current, [requestKey]: streamUrl })); addHistory(curId, curEp); } })
+          .catch(error => { if (alive && requestKey === playKey) setErr((error as Error).message || "JS Spider 播放解析失败"); });
+      } else try {
         const streamUrl = tvboxMediaUrl(video, curEp, tvboxLine);
         setPlayUrls(current => ({ ...current, [playKey]: streamUrl }));
         addHistory(curId, curEp);

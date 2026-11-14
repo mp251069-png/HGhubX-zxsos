@@ -5,10 +5,12 @@ import { AppProvider } from "../src/store";
 import { tvboxList, type TVBoxSource, type TVBoxVideo } from "../src/tvbox";
 import "../src/index.css";
 
+const jsMode = new URLSearchParams(location.search).get("js") === "1";
 const source: TVBoxSource = {
   id: "tvbox-playback-fixture",
   name: "TVBox Playback Fixture",
-  url: new URLSearchParams(location.search).get("api") || "",
+  url: jsMode ? "http://media.fixture.invalid/js/spider.mjs" : new URLSearchParams(location.search).get("api") || "",
+  ...(jsMode ? { kind: "js" as const, ext: { fixture: true } } : {}),
 };
 
 const fixture = {
@@ -43,7 +45,7 @@ function Fixture() {
         bottomInset={0}
         tvboxSource={source}
         tvboxItems={items}
-      /> : <p>正在加载标准 TVBox 详情…</p>}
+      /> : <p>正在加载{jsMode ? " JS Spider" : "标准 TVBox"} 详情…</p>}
     </main>
   </AppProvider>;
 }
