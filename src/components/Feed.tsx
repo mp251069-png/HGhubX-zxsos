@@ -15,7 +15,7 @@ import { setBackHandler } from "../back";
 import { copyText } from "../clipboard";
 import { tracePlayback } from "../playbackDiagnostics";
 import { createPlaybackClock } from "../playbackClock";
-import { tvboxDetail, tvboxDetailModel, tvboxMediaUrl, tvboxPlaybackSource, tvboxVideoCard, type TVBoxSource, type TVBoxVideo, type TVBoxVod } from "../tvbox";
+import { preferredTVBoxLine, tvboxDetail, tvboxDetailModel, tvboxMediaUrl, tvboxPlaybackSource, tvboxVideoCard, type TVBoxSource, type TVBoxVideo, type TVBoxVod } from "../tvbox";
 import {
   IBack, IBoltF, IChevR, IChevronDown, IChevronUp, IClose, ICommentF, ICompress, IExpand, IFileText, IHeart, IHeartF,
   ILink, IList, ILockF, IPauseF, IPlayF, ISearch, IStar, IStarF, IVertSwap, IVol, IVolMute,
@@ -140,7 +140,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   const curId = videoIds[index];
   const tvboxItem = tvboxItems?.find(item => item.localId === curId);
   const tvboxVod = tvboxDetails[curId];
-  const tvboxLine = tvboxLineMap[curId] ?? 0;
+  const tvboxLine = tvboxLineMap[curId] ?? preferredTVBoxLine(tvboxVod);
   const detail = tvboxSource && tvboxVod ? tvboxDetailModel(tvboxVod, tvboxSource, tvboxLine) : details[curId];
   const curEp = epMap[curId] || 1;
   const playKey = tvboxSource ? `${curId}:${curEp}:line:${tvboxLine}` : `${curId}:${curEp}`;
