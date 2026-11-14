@@ -1,4 +1,4 @@
-import { Button, SegmentedControl, Surface, TextArea } from "../components/ios/controls";
+import { Button, Input, SegmentedControl, Surface, TextArea } from "../components/ios/controls";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, APP_VERSION, hostOf, logLine, platform, type UpdateInfo } from "../api";
 import { useStore } from "../store";
@@ -11,6 +11,7 @@ import { formatNetDiag, shortVerdict } from "../netDiagReport";
 import { copyText } from "../clipboard";
 import { IBack, IBoltF, IBroom, IChevR, IHeart, IInfo, ILink, ILockF, IMoon, IRefresh, ISun, IVolMute } from "../icons";
 import { authenticate, checkStatus } from "@tauri-apps/plugin-biometric";
+import { activeTVBoxSource, importTVBoxSources, loadTVBoxSources, removeTVBoxSource, selectTVBoxSource, type TVBoxSource } from "../tvbox";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return <>
@@ -39,6 +40,11 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
   const [diagReport, setDiagReport] = useState<string | null>(null);
   const [copyingReport, setCopyingReport] = useState(false);
   const [appLockPending, setAppLockPending] = useState(false);
+  const [tvboxSources, setTVBoxSources] = useState<TVBoxSource[]>(loadTVBoxSources);
+  const [activeTVBoxId, setActiveTVBoxId] = useState(() => activeTVBoxSource()?.id ?? "");
+  const [tvboxName, setTVBoxName] = useState("");
+  const [tvboxUrl, setTVBoxUrl] = useState("");
+  const [tvboxImporting, setTVBoxImporting] = useState(false);
 
   useEffect(() => { void initPlaybackLog(); }, []);
 
@@ -109,6 +115,24 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
       setAppLockPending(false);
     }
   };
+  const importTVBoxSource = async () => {
+    if (!tvboxUrl.trim() || tvboxImporting) return;
+    setTVBoxImporting(true);
+    try {
+      const result = await importTVBoxSources(tvboxUrl, tvboxName);
+      const allSources = loadTVBoxSources();
+      setTVBoxSources(allSources);
+      const current = activeTVBoxSource();
+      setActiveTVBoxId(current?.id ?? "");
+      setTVBoxUrl("");
+      setTVBoxName("");
+      toast(`已添加 ${result.sources.length} 个 JSON API 源${result.spiderSkipped ? `，跳过 ${result.spiderSkipped} 个 Spider 源` : ""}`, "ok");
+    } catch (error) {
+      toast((error as Error).message || "导入 TVBox 源失败", "info");
+    } finally {
+      setTVBoxImporting(false);
+    }
+  };
 
   return (
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
@@ -167,6 +191,41 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
               </div>
               <Toggle on={preferHevc} onChange={setPreferHevc} label="优先高清" />
             </div>
+          </Section>
+
+          <Section title="TVBox JSON/API 源">
+            <div className="px-3.5 pt-3 text-[12px] text-mut leading-relaxed">
+              添加标准 JSON API 地址，或导入 TVBox 配置 JSON。仅直接 HTTP(S) 媒体地址可播放；JS Spider 与解析脚本会跳过。
+            </div>
+            <Input aria-label="TVBox 源名称" value={tvboxName} onChange={event => setTVBoxName(event.target.value)}
+              placeholder="源名称（可选）" className="mx-3.5 mt-3 w-[calc(100%-28px)] h-10 rounded-(--r-ctl) bg-s3 px-3 text-[13px] text-on placeholder-dim outline-none" />
+            <Input aria-label="TVBox JSON/API 地址" value={tvboxUrl} onChange={event => setTVBoxUrl(event.target.value)}
+              placeholder="https://example.com/api.php/provide/vod/" inputMode="url" autoCapitalize="none" autoCorrect="off"
+              className="mx-3.5 mt-2 w-[calc(100%-28px)] h-10 rounded-(--r-ctl) bg-s3 px-3 text-[13px] text-on placeholder-dim outline-none" />
+            <Button disabled={!tvboxUrl.trim() || tvboxImporting} onClick={() => void importTVBoxSource()}
+              className="mx-3.5 my-3 w-[calc(100%-28px)] h-10 rounded-(--r-ctl) bg-primary text-[13px] font-semibold text-on-primary pressable disabled:opacity-60">
+              {tvboxImporting ? "正在验证并导入…" : "验证并添加"}
+            </Button>
+            {tvboxSources.map(source => (
+              <div key={source.id} className="flex items-center gap-2 px-3.5 py-3 border-t border-s3">
+                <Button aria-pressed={activeTVBoxId === source.id} onClick={() => {
+                  selectTVBoxSource(source.id);
+                  setActiveTVBoxId(source.id);
+                  toast(`已选择 ${source.name}`, "ok");
+                }} className="flex-1 min-w-0 text-left pressable">
+                  <div className="text-[13px] text-on truncate">{source.name}{activeTVBoxId === source.id ? " · 当前" : ""}</div>
+                  <div className="text-[11px] text-dim truncate">{source.url}</div>
+                </Button>
+                <Button aria-label={`移除 ${source.name}`} onClick={() => {
+                  removeTVBoxSource(source.id);
+                  const next = loadTVBoxSources();
+                  setTVBoxSources(next);
+                  setActiveTVBoxId(activeTVBoxSource()?.id ?? "");
+                  toast("已移除 TVBox 源", "info");
+                }} className="shrink-0 px-2 h-8 rounded-(--r-ctl) bg-s3 text-[12px] text-mut pressable">移除</Button>
+              </div>
+            ))}
+            {!tvboxSources.length && <div className="px-3.5 pb-3 text-[12px] text-dim">尚未添加 TVBox 源</div>}
           </Section>
 
           <Section title="本地数据">

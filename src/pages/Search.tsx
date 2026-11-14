@@ -7,6 +7,7 @@ import { useStore } from "../store";
 import { MediaCard, Masonry, RankRow } from "../components/cards";
 import { Empty, Img } from "../components/ui";
 import { IBack, IChevR, IClose, IFireF, IPlayF, IRefresh, ISearch, ITrophy } from "../icons";
+import { activeTVBoxSource, TVBOX_SOURCE_EVENT, tvboxList, tvboxSearch, tvboxVideoCard, type TVBoxCategory, type TVBoxVideo } from "../tvbox";
 
 const HOT_TAGS = ["都市", "逆袭", "古风", "系统", "后宫", "校园", "仙侠", "职场", "大男主", "御姐", "脑洞", "奇幻"];
 
@@ -30,6 +31,24 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
   const [hotError, setHotError] = useState<string | null>(null);
   const hotBusy = useRef(false);
   const hotLoadedAt = useRef(0);
+  const [catalogMode, setCatalogMode] = useState<"hghubx" | "tvbox">("hghubx");
+  const [tvboxSource, setTVBoxSource] = useState(activeTVBoxSource);
+  const [tvboxItems, setTVBoxItems] = useState<TVBoxVideo[]>([]);
+  const [tvboxCategories, setTVBoxCategories] = useState<TVBoxCategory[]>([]);
+  const [tvboxCategory, setTVBoxCategory] = useState("");
+
+  useEffect(() => {
+    const sync = () => {
+      seqRef.current++;
+      busy.current = false;
+      setLoading(false);
+      const source = activeTVBoxSource();
+      setTVBoxSource(source);
+      if (!source) setCatalogMode("hghubx");
+    };
+    window.addEventListener(TVBOX_SOURCE_EVENT, sync);
+    return () => window.removeEventListener(TVBOX_SOURCE_EVENT, sync);
+  }, []);
 
   /* 移动端进入搜索页不自动聚焦：iOS 会立刻弹键盘遮住内容（#20）。
      桌面端没有软键盘，聚焦便于直接打字。 */
@@ -55,8 +74,8 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
   };
   useEffect(() => {
     // 切换主导航时短暂复用榜单；手动刷新始终重新获取官网内容。
-    if (active && Date.now() - hotLoadedAt.current > 60_000) void refreshHot();
-  }, [active]);
+    if (active && catalogMode === "hghubx" && Date.now() - hotLoadedAt.current > 60_000) void refreshHot();
+  }, [active, catalogMode]);
 
   const run = async (keyword: string, p: number, kind: "video" | "post" = tab) => {
     if (p > 1 && (busy.current || p > pages)) return;
@@ -64,6 +83,29 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
     busy.current = true;
     setLoading(true);
     try {
+      if (catalogMode === "tvbox" && tvboxSource) {
+        const result = keyword
+          ? await tvboxSearch(tvboxSource, keyword, p, tvboxCategory)
+          : await tvboxList(tvboxSource, p, tvboxCategory);
+        if (seq !== seqRef.current) return;
+        const cards = result.items.map(video => tvboxVideoCard(video, tvboxSource));
+        setTVBoxItems((prev) => {
+          const base = p === 1 ? [] : prev;
+          const seen = new Set(base.map(video => video.localId));
+          return [...base, ...result.items.filter(video => !seen.has(video.localId))];
+        });
+        setItems((prev) => {
+          const base = p === 1 ? [] : prev;
+          const seen = new Set(base.map(video => video.id));
+          return [...base, ...cards.filter(video => !seen.has(video.id))];
+        });
+        setPosts([]);
+        setTVBoxCategories(result.categories);
+        setPage(p);
+        setPages(result.pages);
+        setErr(null);
+        return;
+      }
       const res = await api.search(keyword, p, 20, kind);
       if (seq !== seqRef.current) return;
       if (kind === "post") {
@@ -93,6 +135,36 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
         setLoading(false);
       }
     }
+  };
+
+  useEffect(() => {
+    if (!active || catalogMode !== "tvbox" || !tvboxSource) return;
+    setItems([]);
+    setTVBoxItems([]);
+    setPosts([]);
+    setPage(0);
+    setPages(1);
+    setErr(null);
+    void run(submitted, 1, "video");
+    // Loading is intentionally tied to source/mode/category navigation, not result state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, catalogMode, tvboxSource?.id, tvboxCategory]);
+
+  const changeCatalogMode = (next: "hghubx" | "tvbox") => {
+    if (next === catalogMode) return;
+    seqRef.current++;
+    busy.current = false;
+    setLoading(false);
+    setCatalogMode(next);
+    setTab("video");
+    setTVBoxCategory("");
+    setSubmitted("");
+    setItems([]);
+    setTVBoxItems([]);
+    setPosts([]);
+    setPage(0);
+    setPages(1);
+    setErr(null);
   };
 
   const changeTab = (next: "video" | "post") => {
@@ -138,8 +210,40 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
         </Button>
       </div>
 
+      {tvboxSource && <div className="shrink-0 px-4 pb-3">
+        <SegmentedControl aria-label="搜索数据源" activeIndex={catalogMode === "hghubx" ? 0 : 1}>
+          <Button aria-pressed={catalogMode === "hghubx"} onClick={() => changeCatalogMode("hghubx")}>HGhubX</Button>
+          <Button aria-pressed={catalogMode === "tvbox"} onClick={() => changeCatalogMode("tvbox")}>{tvboxSource.name}</Button>
+        </SegmentedControl>
+      </div>}
+
       <div className="flex-1 scroll-y px-4 pb-24">
         {!querying ? (
+          catalogMode === "tvbox" && tvboxSource ? (
+            <>
+              <Surface role="region" aria-label="TVBox 影片目录" className="mt-1 rounded-(--r-md) bg-s2 p-3.5 a-rise">
+                <div className="text-[14px] font-semibold text-on/90">{tvboxSource.name}</div>
+              <p className="mt-1 text-[12px] text-mut">标准 TVBox JSON API · 不运行 Spider 或解析脚本</p>
+                {!!tvboxCategories.length && <div className="mt-3 flex flex-wrap gap-2">
+                  <Button aria-pressed={!tvboxCategory} onClick={() => setTVBoxCategory("")}
+                    className={`h-7 px-3 rounded-(--r-ctl) text-[12px] pressable ${!tvboxCategory ? "bg-primary text-on-primary" : "bg-s3 text-on/80"}`}>全部</Button>
+                  {tvboxCategories.map(category => <Button key={category.id} aria-pressed={tvboxCategory === category.id}
+                    onClick={() => setTVBoxCategory(category.id)}
+                    className={`h-7 px-3 rounded-(--r-ctl) text-[12px] pressable ${tvboxCategory === category.id ? "bg-primary text-on-primary" : "bg-s3 text-on/80"}`}>{category.name}</Button>)}
+                </div>}
+              </Surface>
+              {items.length ? <Masonry videos={items} wide={wide} onOpen={(video) => {
+                const index = tvboxItems.findIndex(item => item.localId === video.id);
+                if (index >= 0) push({ kind: "feed", videoIds: tvboxItems.map(item => item.localId), index, title: `${tvboxSource.name} · ${video.title}`, tvboxSource, tvboxItems });
+              }} /> : loading ? <div className="flex justify-center py-12"><Loader className="w-8 h-8 spinner" /></div>
+                : <Empty icon={<ISearch size={26} />} title={err || "此分类暂无影片"} sub="可以换一个分类，或搜索影片名称" />}
+              <div className="flex justify-center py-4">
+                {loading && items.length > 0 ? <Loader className="w-6 h-6 spinner" />
+                  : page < pages ? <Button onClick={() => run("", page + 1, "video")} className="px-5 h-9 rounded-(--r-ctl) bg-s3 text-[13px] text-on/85 pressable">加载更多</Button>
+                    : items.length > 0 ? <span className="text-[12px] text-dim">— 已经到底啦 —</span> : null}
+              </div>
+            </>
+          ) : (
           <>
             <Surface role="region" aria-label="热搜榜" className="mt-1 rounded-(--r-md) bg-s2 p-3.5 a-rise">
                 <div className="flex items-center justify-between">
@@ -207,18 +311,24 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
               输入关键词后按回车搜索，也可以点上面的题材直接看片单。
             </p>
           </>
+          )
         ) : (
           <>
-            <SegmentedControl className="mt-1 mb-3" aria-label="搜索结果类型" activeIndex={tab === "video" ? 0 : 1}>
-              {([["video", "视频"], ["post", "帖子"]] as const).map(([k, label]) => (
+            {catalogMode === "hghubx" && <SegmentedControl className="mt-1 mb-3" aria-label="搜索结果类型" activeIndex={tab === "video" ? 0 : 1}>
+              {([ ["video", "视频"], ["post", "帖子"] ] as const).map(([k, label]) => (
                 <Button aria-pressed={tab === k} key={k} onClick={() => changeTab(k)}>{label}</Button>
               ))}
-            </SegmentedControl>
+            </SegmentedControl>}
             <div className="text-[12px] text-mut mb-2.5">「{submitted}」共 <span className="text-primary font-bold">{tab === "video" ? items.length : posts.length}</span> 条结果</div>
             {(tab === "video" ? items.length : posts.length) ? (
               <>
                 {tab === "video" ? (
-                  <Masonry videos={items} wide={wide} onOpen={(v) => push({ kind: "feed", videoIds: items.map((x) => x.id), index: items.findIndex((x) => x.id === v.id), title: `搜索 · ${submitted}` })} />
+                  <Masonry videos={items} wide={wide} onOpen={(v) => {
+                    if (catalogMode === "tvbox" && tvboxSource) {
+                      const index = tvboxItems.findIndex(item => item.localId === v.id);
+                      if (index >= 0) push({ kind: "feed", videoIds: tvboxItems.map(item => item.localId), index, title: `${tvboxSource.name} · ${submitted}`, tvboxSource, tvboxItems });
+                    } else push({ kind: "feed", videoIds: items.map((x) => x.id), index: items.findIndex((x) => x.id === v.id), title: `搜索 · ${submitted}` });
+                  }} />
                 ) : (
                   <div className={`ios-media-grid ${wide ? "is-wide" : ""}`}>
                     {posts.map((post) => (
