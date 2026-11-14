@@ -3,6 +3,7 @@ import { Button, Form, Input, Surface } from "../components/ios/controls";
 import { Loader } from "../components/ios/effects";
 import { Empty } from "../components/ui";
 import { Masonry } from "../components/cards";
+import BrowseModeSwitch, { type BrowseMode } from "../components/BrowseModeSwitch";
 import { IClapper, IClose, ISearch, ISettings } from "../icons";
 import { useStore } from "../store";
 import {
@@ -19,7 +20,7 @@ import {
 } from "../tvbox";
 import type { VideoCard } from "../types";
 
-export default function TVBoxPage({ active, wide }: { active: boolean; wide: boolean }) {
+export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active: boolean; wide: boolean; onBrowseModeChange: (mode: BrowseMode) => void }) {
   const { push } = useStore();
   const [sources, setSources] = useState<TVBoxSource[]>(loadTVBoxSources);
   const [source, setSource] = useState<TVBoxSource | null>(activeTVBoxSource);
@@ -136,6 +137,7 @@ export default function TVBoxPage({ active, wide }: { active: boolean; wide: boo
           <Button aria-label="管理 TVBox 源" onClick={() => push({ kind: "settings" })}
             className="ios-icon-button shrink-0"><ISettings size={19} /></Button>
         </div>
+        <BrowseModeSwitch mode="tvbox" onChange={onBrowseModeChange} />
         {!!sources.length && (
           <select aria-label="TVBox 数据源" value={source?.id ?? ""}
             onChange={event => selectTVBoxSource(event.target.value)}

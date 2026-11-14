@@ -7,6 +7,7 @@ import { useStore } from "../store";
 import { MediaCard, Masonry, RowCard } from "../components/cards";
 import { CollectionLink, CollectionLinks } from "../components/CollectionLink";
 import { InplaceSearch } from "../components/InplaceSearch";
+import BrowseModeSwitch, { type BrowseMode } from "../components/BrowseModeSwitch";
 import { Empty, Img } from "../components/ui";
 import { IBack, IChevR, IGlobe, IGrid, ISearch, ITrophy } from "../icons";
 
@@ -17,7 +18,7 @@ export const CHANNELS = [
 ] as const;
 
 /* ================= 分类总览 ================= */
-export default function Category({ wide, active }: { wide: boolean; active: boolean }) {
+export default function Category({ wide, active, onBrowseModeChange }: { wide: boolean; active: boolean; onBrowseModeChange: (mode: BrowseMode) => void }) {
   const { push, lineEpoch } = useStore();
   const [rows, setRows] = useState<Record<string, VideoCard[]>>({});
   const [posts, setPosts] = useState<Post[]>([]);
@@ -87,6 +88,7 @@ export default function Category({ wide, active }: { wide: boolean; active: bool
           <span className="ios-page-title text-on">分类</span>
           <span className="text-[12px] text-mut pb-0.5">{CHANNELS.length + 1} 个频道 · 每周持续上新</span>
         </div>
+        <BrowseModeSwitch mode="category" onChange={onBrowseModeChange} />
       </div>
 
       <div className="flex-1 scroll-y pb-24 pt-2">

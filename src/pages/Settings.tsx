@@ -140,7 +140,7 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
       setTVBoxRepositories([]);
       setTVBoxRepositoryUrl("");
       toast(`已添加 ${result.sources.length} 个 JSON API 源${result.spiderSkipped ? `，跳过 ${result.spiderSkipped} 个脚本/非 JSON 源` : ""}`, "ok");
-      setTab("tvbox");
+      setTab("category");
     } catch (error) {
       const message = error instanceof Error ? error.message : typeof error === "string" ? error : "导入 TVBox 源失败";
       setTVBoxImportError(message);
