@@ -23,7 +23,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 /* 独立设置页：线路 / 外观 / 播放 / 本地数据 / 清理缓存 / 网络诊断 / 关于
    入口：Windows 侧栏「设置」、Android「我的」右上角齿轮 */
 export default function Settings({ onBack, wide }: { onBack: () => void; wide: boolean }) {
-  const { platform, theme, themePreference, setTheme, favs, history, muteOnStartup, setMuteOnStartup, preferHevc, setPreferHevc, strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity, appLockEnabled, setAppLockEnabled, toast } = useStore();
+  const { platform, theme, themePreference, setTheme, setTab, favs, history, muteOnStartup, setMuteOnStartup, preferHevc, setPreferHevc, strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity, appLockEnabled, setAppLockEnabled, toast } = useStore();
   const [about, setAbout] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [lineOpen, setLineOpen] = useState(false);
@@ -127,6 +127,7 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
       setTVBoxUrl("");
       setTVBoxName("");
       toast(`已添加 ${result.sources.length} 个 JSON API 源${result.spiderSkipped ? `，跳过 ${result.spiderSkipped} 个 Spider 源` : ""}`, "ok");
+      setTab("tvbox");
     } catch (error) {
       toast((error as Error).message || "导入 TVBox 源失败", "info");
     } finally {
