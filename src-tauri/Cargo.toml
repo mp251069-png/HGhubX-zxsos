@@ -80,6 +80,8 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
+# QuickJS does not bundle aarch64-apple-ios bindings; generate them with Xcode's libclang.
+rquickjs = { version = "0.14", default-features = false, features = ["bindgen"] }
 objc2 = "0.6"
 objc2-ui-kit = { version = "0.3", default-features = false, features = [
   "std",
