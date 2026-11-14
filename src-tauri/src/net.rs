@@ -1386,6 +1386,19 @@ pub async fn fetch_bytes(url: &str) -> Result<(Option<String>, Vec<u8>), String>
 
 /// 拉原始字节；第三方图片可指定经调用方校验过的来源 Referer。
 pub async fn fetch_bytes_with_referer(url: &str, referrer: Option<&str>) -> Result<(Option<String>, Vec<u8>), String> {
+    let (ctype, bytes, _) = fetch_bytes_with_final_url_and_referer(url, referrer).await?;
+    Ok((ctype, bytes))
+}
+
+/// 拉取媒体资源并返回逐跳安全校验后的最终 URL；HLS 相对 URI 必须相对此地址解析。
+pub async fn fetch_bytes_with_final_url(url: &str) -> Result<(Option<String>, Vec<u8>, String), String> {
+    fetch_bytes_with_final_url_and_referer(url, None).await
+}
+
+async fn fetch_bytes_with_final_url_and_referer(
+    url: &str,
+    referrer: Option<&str>,
+) -> Result<(Option<String>, Vec<u8>, String), String> {
     static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let request = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let resource = crate::playback_log::resource_id(url);
@@ -1418,13 +1431,14 @@ pub async fn fetch_bytes_with_referer(url: &str, referrer: Option<&str>) -> Resu
                 if !resp.status().is_success() {
                     return Err(format!("HTTP {}", resp.status()));
                 }
+                let final_url = resp.url().to_string();
                 let ctype = resp
                     .headers()
                     .get(reqwest::header::CONTENT_TYPE)
                     .and_then(|v| v.to_str().ok())
                     .map(|s| s.to_string());
                 let bytes = resp.bytes().await.map_err(|e| err_text(&e))?.to_vec();
-                Ok((ctype, bytes))
+                Ok((ctype, bytes, final_url))
             }.await;
             if using_public_dns {
                 if let Ok(mut routes) = MEDIA_DNS_ROUTES.lock() {
@@ -1441,7 +1455,7 @@ pub async fn fetch_bytes_with_referer(url: &str, referrer: Option<&str>) -> Resu
                     crate::playback_log::record("network.dns_fallback", json!({"resource": resource, "attempt": attempt, "public_dns": !using_public_dns, "error_kind": crate::playback_log::error_kind(error)}));
                 }
             }
-            crate::playback_log::record("network.end", json!({"request": request, "resource": resource, "attempt": attempt, "public_dns": using_public_dns, "status": status, "headers_ms": headers_ms, "elapsed_ms": started.elapsed().as_millis() as u64, "bytes": result.as_ref().ok().map(|(_, bytes)| bytes.len()), "error_kind": result.as_ref().err().map(|e: &String| crate::playback_log::error_kind(e))}));
+            crate::playback_log::record("network.end", json!({"request": request, "resource": resource, "attempt": attempt, "public_dns": using_public_dns, "status": status, "headers_ms": headers_ms, "elapsed_ms": started.elapsed().as_millis() as u64, "bytes": result.as_ref().ok().map(|(_, bytes, _)| bytes.len()), "error_kind": result.as_ref().err().map(|e: &String| crate::playback_log::error_kind(e))}));
             result
         }
     })

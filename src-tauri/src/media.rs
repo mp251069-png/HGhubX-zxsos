@@ -4,7 +4,6 @@
 //! 所以图片与视频统一走本地自定义协议（Windows/Android 为 `http://hg.localhost`，
 //! macOS 为 `hg://localhost`，见 [`LOCAL_ORIGIN`]）。
 
-use crate::net::fetch_bytes;
 use aes::cipher::{BlockDecrypt, KeyInit};
 use aes::Aes128;
 use once_cell::sync::Lazy;
@@ -34,9 +33,9 @@ static IMG_CACHE: Lazy<Mutex<HashMap<String, Arc<Vec<u8>>>>> =
 static PL_CACHE: Lazy<Mutex<HashMap<String, Arc<String>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 /// AES Key / 分片：拖进度条时同一 key、同一片会被反复拉，缓存住省一次往返。
-static KEY_CACHE: Lazy<Mutex<HashMap<String, (String, Arc<Vec<u8>>)>>> =
+static KEY_CACHE: Lazy<Mutex<HashMap<String, (String, Arc<Vec<u8>>, String)>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
-static SEG_CACHE: Lazy<Mutex<HashMap<String, (String, Arc<Vec<u8>>)>>> =
+static SEG_CACHE: Lazy<Mutex<HashMap<String, (String, Arc<Vec<u8>>, String)>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 const IMG_CACHE_MAX: usize = 240;
@@ -229,12 +228,12 @@ pub async fn load_playlist(url: &str, prefix: &str) -> Result<Arc<String>, Strin
     if let Some(hit) = PL_CACHE.lock().unwrap().get(&cache_key).cloned() {
         return Ok(hit);
     }
-    let (_, bytes) = fetch_bytes(url).await?;
+    let (_, bytes, final_url) = crate::net::fetch_bytes_with_final_url(url).await?;
     let text = std::str::from_utf8(&bytes).map_err(|_| "播放列表不是 UTF-8 文本")?;
     if !text.trim_start_matches('\u{feff}').starts_with("#EXTM3U") {
         return Err("响应不是 HLS 播放列表".into());
     }
-    let arc = Arc::new(rewrite_playlist(url, text, prefix));
+    let arc = Arc::new(rewrite_playlist(&final_url, text, prefix));
     cache_put(&PL_CACHE, cache_key, arc.clone(), PL_CACHE_MAX);
     Ok(arc)
 }
@@ -292,14 +291,14 @@ fn absolutize_uri_in_attr(base: &str, line: &str) -> String {
 }
 
 /// 分片 / AES Key 带内存缓存：拖动进度条时避免重复拉取同一片造成卡顿。
-pub async fn load_segment(url: &str) -> Result<(Option<String>, Arc<Vec<u8>>), String> {
-    if let Some((ctype, hit)) = KEY_CACHE.lock().unwrap().get(url).cloned() {
-        return Ok((Some(ctype), hit));
+pub async fn load_segment(url: &str) -> Result<(Option<String>, Arc<Vec<u8>>, String), String> {
+    if let Some((ctype, bytes, final_url)) = KEY_CACHE.lock().unwrap().get(url).cloned() {
+        return Ok((Some(ctype), bytes, final_url));
     }
-    if let Some((ctype, hit)) = SEG_CACHE.lock().unwrap().get(url).cloned() {
-        return Ok((Some(ctype), hit));
+    if let Some((ctype, bytes, final_url)) = SEG_CACHE.lock().unwrap().get(url).cloned() {
+        return Ok((Some(ctype), bytes, final_url));
     }
-    let (ctype, bytes) = fetch_bytes(url).await?;
+    let (ctype, bytes, final_url) = crate::net::fetch_bytes_with_final_url(url).await?;
     let mime = ctype.clone().unwrap_or_else(|| {
         let p = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
         if p.ends_with(".ts") {
@@ -313,11 +312,11 @@ pub async fn load_segment(url: &str) -> Result<(Option<String>, Arc<Vec<u8>>), S
     let len = bytes.len();
     let arc = Arc::new(bytes);
     if len <= 65536 {
-        cache_put(&KEY_CACHE, url.to_string(), (mime.clone(), arc.clone()), KEY_CACHE_MAX);
+        cache_put(&KEY_CACHE, url.to_string(), (mime.clone(), arc.clone(), final_url.clone()), KEY_CACHE_MAX);
     } else if len <= SEG_CACHE_MAX_BYTES {
-        cache_put(&SEG_CACHE, url.to_string(), (mime.clone(), arc.clone()), SEG_CACHE_MAX);
+        cache_put(&SEG_CACHE, url.to_string(), (mime.clone(), arc.clone(), final_url.clone()), SEG_CACHE_MAX);
     }
-    Ok((Some(mime), arc))
+    Ok((Some(mime), arc, final_url))
 }
 
 /// 清空封面 / 播放列表 / Key / 分片内存缓存
@@ -422,6 +421,15 @@ fn segment_response(
     bytes: Vec<u8>,
     origin: &str,
 ) -> Response<Vec<u8>> {
+    segment_response_at_url(target, ctype, bytes, origin)
+}
+
+fn segment_response_at_url(
+    final_url: &str,
+    ctype: Option<&str>,
+    bytes: Vec<u8>,
+    origin: &str,
+) -> Response<Vec<u8>> {
     let playlist = ctype.is_some_and(|t| t.to_ascii_lowercase().contains("mpegurl"))
         || bytes.starts_with(b"#EXTM3U")
         || bytes.starts_with(b"\xef\xbb\xbf#EXTM3U");
@@ -430,7 +438,7 @@ fn segment_response(
             Ok(text) => respond(
                 200,
                 "application/vnd.apple.mpegurl",
-                rewrite_playlist(target, text, origin).into_bytes(),
+                rewrite_playlist(final_url, text, origin).into_bytes(),
                 // Rewriting nested URIs does not require disabling the upstream cache policy.
                 "public, max-age=3600",
             ),
@@ -496,8 +504,8 @@ pub async fn handle(
                 Err(e) => respond(502, "text/plain", e.into_bytes(), "no-store"),
             },
             "/seg" => match load_segment(&target).await {
-                Ok((ctype, bytes)) => {
-                    segment_response(&target, ctype.as_deref(), bytes.as_ref().clone(), origin)
+                Ok((ctype, bytes, final_url)) => {
+                    segment_response_at_url(&final_url, ctype.as_deref(), bytes.as_ref().clone(), origin)
                 }
                 Err(e) => respond(502, "text/plain", e.into_bytes(), "no-store"),
             },
@@ -575,6 +583,30 @@ mod tests {
     }
 
     #[test]
+    fn redirected_hls_manifest_uses_final_url_for_relative_uris() {
+        let original_url = "https://origin.example/watch/master.m3u8";
+        let final_url = "https://cdn.example/v2/playlist/master.m3u8?token=abc";
+        let text = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"keys/key.bin\"\nsegment.ts?sig=one\n";
+
+        let body = rewrite_playlist(final_url, text, LOCAL_ORIGIN);
+        assert!(body.contains(&enc("https://cdn.example/v2/playlist/keys/key.bin")));
+        assert!(body.contains(&enc("https://cdn.example/v2/playlist/segment.ts?sig=one")));
+        assert!(!body.contains(&enc("https://origin.example/watch/segment.ts?sig=one")));
+
+        let stale = rewrite_playlist(original_url, text, LOCAL_ORIGIN);
+        assert!(stale.contains(&enc("https://origin.example/watch/segment.ts?sig=one")));
+        let nested = segment_response_at_url(
+            final_url,
+            Some("application/vnd.apple.mpegurl"),
+            text.as_bytes().to_vec(),
+            LOCAL_ORIGIN,
+        );
+        assert!(std::str::from_utf8(nested.body()).unwrap().contains(&enc(
+            "https://cdn.example/v2/playlist/segment.ts?sig=one"
+        )));
+    }
+
+    #[test]
     fn byte_ranges_return_partial_content_and_correct_headers() {
         let response = respond(200, "video/mp2t", b"0123456789".to_vec(), "no-store");
         let ranged = apply_byte_range(response, Some("bytes=2-5"));
@@ -630,7 +662,7 @@ mod tests {
         .expect("play api");
         let url = play["video_url"].as_str().expect("video_url").to_string();
         println!("play url: {}", &url[..url.len().min(90)]);
-        let (_, bytes) = fetch_bytes(&url).await.expect("fetch playlist");
+        let (_, bytes) = crate::net::fetch_bytes(&url).await.expect("fetch playlist");
         let text = String::from_utf8_lossy(&bytes);
         println!(
             "raw playlist len={} head={}",
