@@ -42,8 +42,34 @@ export const LOCAL =
 /** src 是否已是本地协议地址（避免在详情页把代理地址再包一层） */
 export const isLocalMedia = (src: string) => src.startsWith(`${LOCAL}/`);
 
+const normalizedRefererOrigin = (referrer?: string): string => {
+  if (!referrer) return "";
+  try {
+    const parsed = new URL(referrer);
+    if ((parsed.protocol === "http:" || parsed.protocol === "https:") && !parsed.username && !parsed.password && parsed.origin !== "null") {
+      return `${parsed.origin}/`;
+    }
+  } catch { /* Invalid referrers are ignored. */ }
+  return "";
+};
+
+/** UA 只允许作为单一请求头传给媒体代理，拒绝控制字符并限制 URL 查询长度。 */
+export const normalizedMediaUserAgent = (userAgent?: string): string => {
+  if (!userAgent || userAgent.length > 512 || /[\u0000-\u001f\u007f]/.test(userAgent)) return "";
+  return userAgent;
+};
+const mediaQuerySuffix = (referrer?: string, userAgent?: string): string => {
+  const params = new URLSearchParams();
+  const ref = normalizedRefererOrigin(referrer);
+  const mediaUa = normalizedMediaUserAgent(userAgent);
+  if (ref) params.set("r", ref);
+  if (mediaUa) params.set("ua", mediaUa);
+  const query = params.toString();
+  return query ? `&${query}` : "";
+};
+
 /** 封面经本地协议代理；可选来源只用于第三方 TVBox 图床的防盗链 Referer。 */
-export const cover = (url?: string, _w = 480, referrer?: string) => {
+export const cover = (url?: string, _w = 480, referrer?: string, userAgent?: string) => {
   if (!url) return "";
   // TVBox cards already carry the local image-proxy URL. Img() also calls
   // cover(), so keep that URL intact instead of proxying the proxy as an image.
@@ -54,20 +80,18 @@ export const cover = (url?: string, _w = 480, referrer?: string) => {
     } catch { /* Non-URL inputs are handled as upstream URLs below. */ }
   }
   const params = new URLSearchParams({ u: url });
-  if (referrer) {
-    try {
-      const parsed = new URL(referrer);
-      if ((parsed.protocol === "http:" || parsed.protocol === "https:") && !parsed.username && !parsed.password) {
-        params.set("r", `${parsed.origin}/`);
-      }
-    } catch { /* Invalid referrers are ignored; ordinary covers still load. */ }
-  }
+  const ref = normalizedRefererOrigin(referrer);
+  const mediaUa = normalizedMediaUserAgent(userAgent);
+  if (ref) params.set("r", ref);
+  if (mediaUa) params.set("ua", mediaUa);
   return `${LOCAL}/img?${params.toString()}`;
 };
 
 /** 播放列表：经本地协议改写分片地址，规避 CORS 与防盗链。 */
 export const playlistRoute = (target: typeof platform = platform) => target === "ios" ? "/hls/playlist.m3u8" : "/hls";
-export const playlist = (url: string) => `${LOCAL}${playlistRoute()}?u=${encodeURIComponent(url)}`;
+export const playlist = (url: string, referrer?: string, userAgent?: string) => {
+  return `${LOCAL}${playlistRoute()}?u=${encodeURIComponent(url)}${mediaQuerySuffix(referrer, userAgent)}`;
+};
 
 /* ── 调用封装 ───────────────────────────────────────────── */
 
@@ -372,11 +396,11 @@ export const dur = (s?: number | string) => {
 };
 
 /** 非 m3u8 媒体（mp4 等）走 /seg 原样透传 */
-export function directMedia(url: string): string {
-  return `${LOCAL}/seg?u=${encodeURIComponent(url)}`;
+export function directMedia(url: string, referrer?: string, userAgent?: string): string {
+  return `${LOCAL}/seg?u=${encodeURIComponent(url)}${mediaQuerySuffix(referrer, userAgent)}`;
 }
 
 /** 按扩展名选择代理方式：m3u8 → 播放列表改写；其它 → 原样透传 */
-export function mediaUrl(url: string): string {
-  return /\.m3u8(\?|$)/i.test(url) ? playlist(url) : directMedia(url);
+export function mediaUrl(url: string, referrer?: string, userAgent?: string): string {
+  return /\.m3u8(\?|$)/i.test(url) ? playlist(url, referrer, userAgent) : directMedia(url, referrer, userAgent);
 }
