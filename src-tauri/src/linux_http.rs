@@ -69,7 +69,7 @@ fn serve(mut stream: TcpStream) -> std::io::Result<()> {
         None => (target, ""),
     };
 
-    let response = tauri::async_runtime::block_on(crate::media::handle(path, query, ORIGIN));
+    let response = tauri::async_runtime::block_on(crate::media::handle(path, query, ORIGIN, None));
     let (parts, body) = response.into_parts();
 
     write_response(&mut stream, method, parts, &body)
