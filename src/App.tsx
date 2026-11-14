@@ -56,6 +56,7 @@ function StackPage({ page, onBack, wide, top, bottomInset }: {
     return (
       <Feed videoIds={page.videoIds} startIndex={page.index} title={page.title} kind={page.feedKind || "video"}
         startEp={page.startEp} startTime={page.startTime}
+        tvboxSource={page.tvboxSource} tvboxItems={page.tvboxItems}
         mode="context" active={top} bottomInset={bottomInset} onBack={onBack} />
     );
   }

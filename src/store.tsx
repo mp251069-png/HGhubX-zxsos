@@ -3,6 +3,7 @@ import { api, platform as envPlatform } from "./api";
 import { isStrictSecurity, setStrictSecurity as setHtmlStrictSecurity } from "./html";
 import type { User } from "./types";
 import { readStorage, STORAGE_KEYS } from "./storage";
+import type { TVBoxSource, TVBoxVideo } from "./tvbox";
 
 export type Platform = "android" | "ios" | "windows" | "macos" | "linux";
 export type Theme = "dark" | "light";
@@ -21,6 +22,8 @@ export type FeedContext = {
   /** 从观看记录续播：起始集数与秒数 */
   startEp?: number;
   startTime?: number;
+  tvboxSource?: TVBoxSource;
+  tvboxItems?: TVBoxVideo[];
 };
 
 export type Page =
@@ -38,7 +41,7 @@ export type Page =
   | { kind: "user"; key: string; id: number; name?: string };
 
 export type PageInput =
-  | { kind: "feed"; videoIds: number[]; index: number; title: string; source?: string; feedKind?: "video" | "post"; startEp?: number; startTime?: number }
+  | { kind: "feed"; videoIds: number[]; index: number; title: string; source?: string; feedKind?: "video" | "post"; startEp?: number; startTime?: number; tvboxSource?: TVBoxSource; tvboxItems?: TVBoxVideo[] }
   | { kind: "channel"; cate: string; name: string }
   | { kind: "ranks" }
   | { kind: "settings" }
