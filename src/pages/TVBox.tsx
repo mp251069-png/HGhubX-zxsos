@@ -4,7 +4,7 @@ import { Loader } from "../components/ios/effects";
 import { Empty } from "../components/ui";
 import { Masonry } from "../components/cards";
 import BrowseModeSwitch, { type BrowseMode } from "../components/BrowseModeSwitch";
-import { IClapper, IClose, ISearch, ISettings } from "../icons";
+import { IClapper, IClose, ISearch } from "../icons";
 import { useStore } from "../store";
 import {
   activeTVBoxSource,
@@ -129,15 +129,11 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
   return (
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
       <div className="shrink-0 px-4 pt-3 pb-3" style={{ paddingTop: "calc(var(--sat, 0px) + 12px)" }}>
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="ios-page-title flex items-center gap-2"><IClapper size={22} />TVBox 影视</h1>
-            <p className="mt-1 text-[12px] text-mut">标准 JSON/API 与隔离 JS Spider · 选片、搜索并播放</p>
-          </div>
-          <Button aria-label="管理 TVBox 源" onClick={() => push({ kind: "settings" })}
-            className="ios-icon-button shrink-0"><ISettings size={19} /></Button>
+        <div className="flex items-end gap-2.5 mb-2.5">
+          <h1 className="ios-page-title text-on">影视</h1>
+          <span className="text-[12px] text-mut pb-0.5">TVBox 点播源 · 选片、搜索并播放</span>
         </div>
-        <BrowseModeSwitch mode="tvbox" onChange={onBrowseModeChange} />
+        <BrowseModeSwitch mode="tvbox" lastVodMode="tvbox" onChange={onBrowseModeChange} />
         {!!sources.length && (
           <select aria-label="TVBox 数据源" value={source?.id ?? ""}
             onChange={event => selectTVBoxSource(event.target.value)}

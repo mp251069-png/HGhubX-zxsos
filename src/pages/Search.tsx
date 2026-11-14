@@ -223,7 +223,7 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
             <>
               <Surface role="region" aria-label="TVBox 影片目录" className="mt-1 rounded-(--r-md) bg-s2 p-3.5 a-rise">
                 <div className="text-[14px] font-semibold text-on/90">{tvboxSource.name}</div>
-              <p className="mt-1 text-[12px] text-mut">标准 TVBox JSON API · 不运行 Spider 或解析脚本</p>
+                <p className="mt-1 text-[12px] text-mut">支持标准 TVBox JSON/API 与隔离 QuickJS 有限 HTTP(S) JS/MJS Spider（非完整 Android/drpy 兼容）</p>
                 {!!tvboxCategories.length && <div className="mt-3 flex flex-wrap gap-2">
                   <Button aria-pressed={!tvboxCategory} onClick={() => setTVBoxCategory("")}
                     className={`h-7 px-3 rounded-(--r-ctl) text-[12px] pressable ${!tvboxCategory ? "bg-primary text-on-primary" : "bg-s3 text-on/80"}`}>全部</Button>

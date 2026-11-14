@@ -12,6 +12,7 @@ import { copyText } from "../clipboard";
 import { IBack, IBoltF, IBroom, IChevR, IHeart, IInfo, ILink, ILockF, IMoon, IRefresh, ISun, IVolMute } from "../icons";
 import { authenticate, checkStatus } from "@tauri-apps/plugin-biometric";
 import { activeTVBoxSource, importTVBoxSources, loadTVBoxSources, removeTVBoxSource, selectTVBoxSource, type TVBoxRepository, type TVBoxSource } from "../tvbox";
+import { activeLiveSource, importLiveSourceFromText, importLiveSourceFromUrl, loadLiveSources, removeLiveSource, selectLiveSource, type LiveSource } from "../live";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return <>
@@ -48,6 +49,13 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
   const [tvboxRepositories, setTVBoxRepositories] = useState<TVBoxRepository[]>([]);
   const [tvboxRepositoryUrl, setTVBoxRepositoryUrl] = useState("");
   const [tvboxImportError, setTVBoxImportError] = useState("");
+  const [liveSources, setLiveSources] = useState<LiveSource[]>(loadLiveSources);
+  const [activeLiveId, setActiveLiveId] = useState(() => activeLiveSource()?.id ?? "");
+  const [liveName, setLiveName] = useState("");
+  const [liveUrl, setLiveUrl] = useState("");
+  const [liveText, setLiveText] = useState("");
+  const [liveImporting, setLiveImporting] = useState(false);
+  const [liveImportError, setLiveImportError] = useState("");
 
   useEffect(() => { void initPlaybackLog(); }, []);
 
@@ -139,7 +147,7 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
       setTVBoxName("");
       setTVBoxRepositories([]);
       setTVBoxRepositoryUrl("");
-      toast(`已添加 ${result.sources.length} 个 JSON API 源${result.spiderSkipped ? `，跳过 ${result.spiderSkipped} 个脚本/非 JSON 源` : ""}`, "ok");
+      toast(`已添加 ${result.sources.length} 个 TVBox 源${result.spiderSkipped ? `，跳过 ${result.spiderSkipped} 个不支持的运行器源` : ""}`, "ok");
       setTab("category");
     } catch (error) {
       const message = error instanceof Error ? error.message : typeof error === "string" ? error : "导入 TVBox 源失败";
@@ -147,6 +155,60 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
       toast(message, "info");
     } finally {
       setTVBoxImporting(false);
+    }
+  };
+  const syncLiveState = () => {
+    const all = loadLiveSources();
+    setLiveSources(all);
+    setActiveLiveId(activeLiveSource(all)?.id ?? "");
+  };
+  const handleImportLiveUrl = async () => {
+    if (!liveUrl.trim() || liveImporting) return;
+    setLiveImporting(true);
+    setLiveImportError("");
+    try {
+      const imported = await importLiveSourceFromUrl(liveUrl, liveName);
+      syncLiveState();
+      setLiveUrl("");
+      setLiveName("");
+      toast(`已导入直播源「${imported.name}」（${imported.channels.length} 个频道${imported.skippedUnsafe ? `，过滤 ${imported.skippedUnsafe} 条不安全链接` : ""}）`, "ok");
+      setTab("category");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : typeof error === "string" ? error : "导入 M3U 直播源失败";
+      setLiveImportError(message);
+      toast(message, "info");
+    } finally {
+      setLiveImporting(false);
+    }
+  };
+  const handleImportLiveText = (rawText = liveText, customName = liveName) => {
+    if (!rawText.trim() || liveImporting) return;
+    setLiveImportError("");
+    try {
+      const imported = importLiveSourceFromText(rawText, customName || "本地 M3U 直播源");
+      syncLiveState();
+      setLiveText("");
+      setLiveName("");
+      toast(`已导入直播源「${imported.name}」（${imported.channels.length} 个频道${imported.skippedUnsafe ? `，过滤 ${imported.skippedUnsafe} 条不安全链接` : ""}）`, "ok");
+      setTab("category");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : typeof error === "string" ? error : "解析 M3U 内容失败";
+      setLiveImportError(message);
+      toast(message, "info");
+    }
+  };
+  const handleLiveFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const fileBaseName = file.name.replace(/\.(m3u8|m3u|txt)$/i, "").trim();
+      handleImportLiveText(text, liveName.trim() || fileBaseName || "本地文件直播源");
+    } catch {
+      const msg = "读取本地 M3U 文件失败";
+      setLiveImportError(msg);
+      toast(msg, "info");
     }
   };
 
@@ -210,34 +272,36 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
           </Section>
 
           <Section title="TVBox JSON/API 源">
-            <div className="px-3.5 pt-3 text-[12px] text-mut leading-relaxed">
-              添加标准 JSON API，或导入 TVBox 单仓/多仓 JSON；多仓将先显示子配置供选择。仅直接 HTTP(S) 媒体地址可播放；JS、Python、JAR Spider 与解析脚本不会执行。
-            </div>
-            <Input aria-label="TVBox 源名称" value={tvboxName} onChange={event => setTVBoxName(event.target.value)}
-              placeholder="源名称（可选）" className="mx-3.5 mt-3 w-[calc(100%-28px)] h-10 rounded-(--r-ctl) bg-s3 px-3 text-[13px] text-on placeholder-dim outline-none" />
-            <Input aria-label="TVBox JSON/API 地址" value={tvboxUrl} onChange={event => {
-              setTVBoxUrl(event.target.value); setTVBoxRepositories([]); setTVBoxRepositoryUrl(""); setTVBoxImportError("");
-            }}
-              placeholder="https://example.com/api.php/provide/vod/" inputMode="url" autoCapitalize="none" autoCorrect="off"
-              className="mx-3.5 mt-2 w-[calc(100%-28px)] h-10 rounded-(--r-ctl) bg-s3 px-3 text-[13px] text-on placeholder-dim outline-none" />
-            <Button disabled={!tvboxUrl.trim() || tvboxImporting} onClick={() => void importTVBoxSource()}
-              className="mx-3.5 my-3 w-[calc(100%-28px)] h-10 rounded-(--r-ctl) bg-primary text-[13px] font-semibold text-on-primary pressable disabled:opacity-60">
-              {tvboxImporting ? "正在验证并导入…" : "验证并添加"}
-            </Button>
-            {tvboxImportError && <div role="alert" className="mx-3.5 mb-3 text-[12px] text-danger leading-relaxed">{tvboxImportError}</div>}
-            {tvboxRepositories.length > 0 && <div role="group" aria-label="TVBox 子配置列表" className="mx-3.5 mb-3 rounded-(--r-sm) bg-s3 p-3">
-              <div className="text-[13px] font-semibold text-on">选择子配置 · {tvboxRepositories.length} 个</div>
-              <div className="text-[11px] text-dim mt-1 break-all">{tvboxRepositoryUrl}</div>
-              <p className="text-[12px] text-mut mt-2 mb-2">只导入所选配置中的标准 API；如果全是 Spider，将说明原因，不会添加空片库。</p>
-              <div className="max-h-64 overflow-y-auto">
-                {tvboxRepositories.map(repository => <Button key={repository.url} disabled={tvboxImporting}
-                  onClick={() => void importTVBoxSource(repository.url, repository.name)}
-                  className="w-full text-left py-2 border-t border-dim/20 pressable disabled:opacity-60">
-                  <div className="text-[13px] text-on">{repository.name}</div>
-                  <div className="text-[11px] text-dim truncate">{repository.url}</div>
-                </Button>)}
+            <div className="space-y-2.5">
+              <div className="text-[12px] text-mut leading-relaxed">
+                添加标准 JSON API，或导入 TVBox 单仓/多仓 JSON；多仓将先显示子配置供选择。支持标准 HTTP(S) JSON/API 与后端隔离 QuickJS 有限 HTTP(S) .js/.mjs Spider（需返回直连 HLS/MP4 地址，不是完整 Android/drpy 兼容）；JAR、Python、未知运行器及网页嗅探解析不会执行。
               </div>
-            </div>}
+              <Input aria-label="TVBox 源名称" value={tvboxName} onChange={event => setTVBoxName(event.target.value)}
+                placeholder="源名称（可选）" className="w-full h-10 rounded-(--r-ctl) bg-s3 px-3 text-[13px] text-on placeholder-dim outline-none" />
+              <Input aria-label="TVBox JSON/API 地址" value={tvboxUrl} onChange={event => {
+                setTVBoxUrl(event.target.value); setTVBoxRepositories([]); setTVBoxRepositoryUrl(""); setTVBoxImportError("");
+              }}
+                placeholder="https://example.com/api.php/provide/vod/" inputMode="url" autoCapitalize="none" autoCorrect="off"
+                className="w-full h-10 rounded-(--r-ctl) bg-s3 px-3 text-[13px] text-on placeholder-dim outline-none" />
+              <Button disabled={!tvboxUrl.trim() || tvboxImporting} onClick={() => void importTVBoxSource()}
+                className="w-full h-10 rounded-(--r-ctl) bg-primary text-[13px] font-semibold text-on-primary pressable disabled:opacity-60">
+                {tvboxImporting ? "正在验证并导入…" : "验证并添加"}
+              </Button>
+              {tvboxImportError && <div role="alert" className="text-[12px] text-danger leading-relaxed">{tvboxImportError}</div>}
+              {tvboxRepositories.length > 0 && <div role="group" aria-label="TVBox 子配置列表" className="rounded-(--r-sm) bg-s3 p-3">
+                <div className="text-[13px] font-semibold text-on">选择子配置 · {tvboxRepositories.length} 个</div>
+                <div className="text-[11px] text-dim mt-1 break-all">{tvboxRepositoryUrl}</div>
+                <p className="text-[12px] text-mut mt-2 mb-2">导入所选配置中的标准 API 与受支持的隔离 HTTP(S) JS/MJS Spider；若全是 JAR/Python 等不支持的运行器，将说明原因，不会添加空片库。</p>
+                <div className="max-h-64 overflow-y-auto">
+                  {tvboxRepositories.map(repository => <Button key={repository.url} disabled={tvboxImporting}
+                    onClick={() => void importTVBoxSource(repository.url, repository.name)}
+                    className="w-full text-left py-2 border-t border-dim/20 pressable disabled:opacity-60">
+                    <div className="text-[13px] text-on">{repository.name}</div>
+                    <div className="text-[11px] text-dim truncate">{repository.url}</div>
+                  </Button>)}
+                </div>
+              </div>}
+            </div>
             {tvboxSources.map(source => (
               <div key={source.id} className="flex items-center gap-2 px-3.5 py-3 border-t border-s3">
                 <Button aria-pressed={activeTVBoxId === source.id} onClick={() => {
@@ -258,6 +322,88 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
               </div>
             ))}
             {!tvboxSources.length && <div className="px-3.5 pb-3 text-[12px] text-dim">尚未添加 TVBox 源</div>}
+          </Section>
+
+          <Section title="APTV / M3U 直播源">
+            <div className="space-y-2.5">
+              <div className="text-[12px] text-mut leading-relaxed">
+                支持通用 Extended M3U（.m3u / .m3u8）订阅链接或本地文本/文件导入，兼容 APTV 使用的通用 M3U 订阅（解析 #EXTINF tvg-id/tvg-name/tvg-logo、group-title、#EXTGRP 与每频道 HTTP 头元数据）。不支持 APTV 私有加密配置；仅允许 HTTP/HTTPS 流地址，自动拒绝 javascript/file 等不安全协议。
+              </div>
+              <Input
+                aria-label="直播源名称"
+                value={liveName}
+                onChange={e => setLiveName(e.target.value)}
+                placeholder="直播源名称（可选）"
+                className="w-full h-10 rounded-(--r-ctl) bg-s3 px-3 text-[13px] text-on placeholder-dim outline-none"
+              />
+              <Input
+                aria-label="M3U 订阅链接"
+                value={liveUrl}
+                onChange={e => { setLiveUrl(e.target.value); setLiveImportError(""); }}
+                placeholder="https://example.com/live.m3u8"
+                inputMode="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                className="w-full h-10 rounded-(--r-ctl) bg-s3 px-3 text-[13px] text-on placeholder-dim outline-none"
+              />
+              <Button
+                disabled={!liveUrl.trim() || liveImporting}
+                onClick={() => void handleImportLiveUrl()}
+                className="w-full h-10 rounded-(--r-ctl) bg-primary text-[13px] font-semibold text-on-primary pressable disabled:opacity-60"
+              >
+                {liveImporting ? "正在拉取并解析…" : "导入 M3U 订阅"}
+              </Button>
+
+              <div className="pt-1 border-t border-white/8 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[12px] font-medium text-on/85">本地 M3U 文本或文件导入</span>
+                  <label className="cursor-pointer rounded-(--r-ctl) bg-s3 px-3 py-1.5 text-[12px] text-primary font-medium hover:opacity-90">
+                    选择 .m3u/.m3u8 文件
+                    <input
+                      type="file"
+                      aria-label="导入本地 M3U 文件"
+                      accept=".m3u,.m3u8,.txt,audio/x-mpegurl,application/vnd.apple.mpegurl,text/plain"
+                      onChange={e => void handleLiveFileChange(e)}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+                <TextArea
+                  aria-label="本地 M3U 文本"
+                  value={liveText}
+                  onChange={e => { setLiveText(e.target.value); setLiveImportError(""); }}
+                  placeholder={"#EXTM3U\n#EXTINF:-1 tvg-name=\"CCTV1\" group-title=\"央视\",CCTV-1 综合\nhttps://example.com/live/cctv1.m3u8"}
+                  rows={3}
+                  className="w-full rounded-(--r-ctl) bg-s3 p-3 text-[12px] text-on placeholder-dim outline-none font-mono"
+                />
+                <Button
+                  disabled={!liveText.trim() || liveImporting}
+                  onClick={() => handleImportLiveText()}
+                  className="w-full h-9 rounded-(--r-ctl) bg-s3 text-[12px] font-semibold text-on pressable disabled:opacity-50"
+                >
+                  从本地文本导入
+                </Button>
+              </div>
+              {liveImportError && <div role="alert" className="text-[12px] text-danger leading-relaxed">{liveImportError}</div>}
+            </div>
+            {liveSources.map(source => (
+              <div key={source.id} className="flex items-center gap-2 px-3.5 py-3 border-t border-s3">
+                <Button aria-pressed={activeLiveId === source.id} onClick={() => {
+                  selectLiveSource(source.id);
+                  setActiveLiveId(source.id);
+                  toast(`已选择直播源 ${source.name}`, "ok");
+                }} className="flex-1 min-w-0 text-left pressable">
+                  <div className="text-[13px] text-on truncate">{source.name}（{source.channels.length} 台）{activeLiveId === source.id ? " · 当前" : ""}</div>
+                  <div className="text-[11px] text-dim truncate">{source.url || "本地 M3U 文本/文件导入"}</div>
+                </Button>
+                <Button aria-label={`移除直播源 ${source.name}`} onClick={() => {
+                  removeLiveSource(source.id);
+                  syncLiveState();
+                  toast("已移除直播源", "info");
+                }} className="shrink-0 px-2 h-8 rounded-(--r-ctl) bg-s3 text-[12px] text-mut pressable">移除</Button>
+              </div>
+            ))}
+            {!liveSources.length && <div className="px-3.5 pb-3 text-[12px] text-dim">尚未添加 APTV / M3U 直播源</div>}
           </Section>
 
           <Section title="本地数据">
