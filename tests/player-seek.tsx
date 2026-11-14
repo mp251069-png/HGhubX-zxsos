@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import Feed from "../src/components/Feed";
-import { AppProvider } from "../src/store";
+import { AppProvider, useStore } from "../src/store";
 import { api } from "../src/api";
 import "../src/index.css";
 import { flushPlaybackLog, initPlaybackLog, playbackLogApi, setPlaybackLog } from "../src/playbackDiagnostics";
@@ -24,6 +24,7 @@ const fixture = {
   rejectPlaybackApi: new URLSearchParams(location.search).has("api-failure"),
   seeks: [] as number[], errors: [] as string[],
   setActive: (_active: boolean) => {},
+  setFullscreen: (_fullscreen: boolean) => {},
   logs: [] as { event: string; data: Record<string, unknown> }[],
   setLogging: setPlaybackLog,
   flushLogs: flushPlaybackLog,
@@ -73,11 +74,18 @@ api.video = async () => ({
   counts: { like: 0, collect: 0, comment: 0, hot: 0 },
   author: { id: 1, name: "Fixture" }, is_finished: true, is_original: 0,
 });
+Object.assign(window, { __TAURI_INTERNALS__: { invoke: async () => null } });
+function StoreBridge() {
+  const store = useStore();
+  fixture.setFullscreen = store.setFs;
+  return null;
+}
 function Fixture() {
   const [active, setActive] = useState(!initiallyInactive);
   const [settings, setSettings] = useState(false);
   fixture.setActive = setActive;
   return <AppProvider>
+    <StoreBridge />
     <div style={{ position: "relative", width: 900, height: 540 }}>
       {legacyTest
         ? <Player src="https://media.fixture.invalid/list.m3u8" autoPlay active={active} className="w-full h-full" diagnosticContext={{ video_id: 991, active }} />
