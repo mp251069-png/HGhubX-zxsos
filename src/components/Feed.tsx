@@ -15,6 +15,7 @@ import { setBackHandler } from "../back";
 import { copyText } from "../clipboard";
 import { tracePlayback } from "../playbackDiagnostics";
 import { createPlaybackClock } from "../playbackClock";
+import { tvboxDetail, tvboxDetailModel, tvboxMediaUrl, tvboxVideoCard, type TVBoxSource, type TVBoxVideo, type TVBoxVod } from "../tvbox";
 import {
   IBack, IBoltF, IChevR, IChevronDown, IChevronUp, IClose, ICommentF, ICompress, IExpand, IFileText, IHeart, IHeartF,
   ILink, IList, ILockF, IPauseF, IPlayF, ISearch, IStar, IStarF, IVertSwap, IVol, IVolMute,
@@ -33,13 +34,15 @@ type Props = {
   /** 从观看记录续播：起始集数与秒数 */
   startEp?: number;
   startTime?: number;
+  tvboxSource?: TVBoxSource;
+  tvboxItems?: TVBoxVideo[];
 };
 
 const RATES = [1, 1.25, 1.5, 2];
 
 const stripHtml = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 
-export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind = "video", active, bottomInset, onBack, onNearEnd, startEp, startTime }: Props) {
+export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind = "video", active, bottomInset, onBack, onNearEnd, startEp, startTime, tvboxSource, tvboxItems }: Props) {
   const store = useStore();
   const { isLiked, isFav, toggleLikeLocal, toggleFavLocal, toggleFollowLocal, muted, setMuted, volume, setVolume, toast, addHistory, user, setLoginOpen, swipeEp, setSwipeEp, preferHevc, setPreferHevc } = store;
   const isDesktop = !isMobile;
@@ -50,6 +53,8 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   const [renderIndex, setRenderIndex] = useState(startIndex);
   const [epMap, setEpMap] = useState<Record<number, number>>(() => (startEp ? { [videoIds[startIndex]]: startEp } : {}));
   const [details, setDetails] = useState<Record<number, Detail>>({});
+  const [tvboxDetails, setTVBoxDetails] = useState<Record<number, TVBoxVod>>({});
+  const [tvboxLineMap, setTVBoxLineMap] = useState<Record<number, number>>({});
   const [playUrls, setPlayUrls] = useState<Record<string, string>>({});
   const [hevcUrls, setHevcUrls] = useState<Record<string, string>>({});
   const [proxyRetry, setProxyRetry] = useState(0);
@@ -133,9 +138,12 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   const pinchRef = useRef<{ d0: number; mx0: number; my0: number; s0: number; x0: number; y0: number } | null>(null);
 
   const curId = videoIds[index];
-  const detail = details[curId];
+  const tvboxItem = tvboxItems?.find(item => item.localId === curId);
+  const tvboxVod = tvboxDetails[curId];
+  const tvboxLine = tvboxLineMap[curId] ?? 0;
+  const detail = tvboxSource && tvboxVod ? tvboxDetailModel(tvboxVod, tvboxSource, tvboxLine) : details[curId];
   const curEp = epMap[curId] || 1;
-  const playKey = `${curId}:${curEp}`;
+  const playKey = tvboxSource ? `${curId}:${curEp}:line:${tvboxLine}` : `${curId}:${curEp}`;
   const mainUrl = playUrls[playKey] || "";
   const hevcUrl = hevcUrls[playKey] || "";
   const playUrl = preferHevc && hevcUrl ? hevcUrl : mainUrl;
@@ -196,12 +204,12 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
         episodes: [] as Episode[],
       }
     : {
-        title: detail?.title || cards[curId]?.title || "",
-        cover: detail?.cover || cards[curId]?.cover || "",
-        desc: detail?.description || "",
-        author: detail?.author?.name || "HGhubX",
+        title: detail?.title || cards[curId]?.title || tvboxItem?.title || "",
+        cover: tvboxSource ? cover(tvboxItem?.cover || tvboxVod?.cover || "") : detail?.cover || cards[curId]?.cover || "",
+        desc: detail?.description || tvboxItem?.description || "",
+        author: detail?.author?.name || tvboxSource?.name || "HGhubX",
         authorId: detail?.author?.id || -1,
-        tags: detail?.tags || [],
+        tags: detail?.tags || [tvboxItem?.year, tvboxItem?.area, tvboxItem?.language].filter((tag): tag is string => !!tag),
         score: detail?.score || 0,
         like: detail?.counts?.like ?? cards[curId]?.like_count ?? 0,
         comment: detail?.counts?.comment ?? cards[curId]?.comment_count ?? 0,
@@ -209,13 +217,17 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
         episodes: detail?.episodes || [],
       };
 
-  const posterUrl = cover(meta.cover, 900);
+  const posterUrl = tvboxSource ? meta.cover : cover(meta.cover, 900);
   const hasVideo = kind === "video" || !!post?.video_url;
   const articleHtml = kind === "post" && !hasVideo ? (post?.content || "") : "";
 
   /* 分享：复制播放链接 */
   const shareLink = () => {
-    const u = kind === "post" ? (posts[curId]?.video_url || meta.title) : `https://huangguoai.com/video/${curId}/`;
+    let tvboxUrl = meta.title;
+    if (tvboxSource && tvboxVod) {
+      try { tvboxUrl = tvboxMediaUrl(tvboxVod, curEp, tvboxLine); } catch { /* 没有可直连地址时复制标题 */ }
+    }
+    const u = tvboxSource ? tvboxUrl : kind === "post" ? (posts[curId]?.video_url || meta.title) : `https://huangguoai.com/video/${curId}/`;
     copyText(u).then(() => toast("链接已复制", "ok")).catch(() => toast("复制失败", "info"));
   };
 
@@ -314,13 +326,25 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   useEffect(() => {
     let alive = true;
     const need = [videoIds[index], videoIds[index + 1], videoIds[index - 1]].filter(Boolean);
+    if (tvboxSource && tvboxItems) {
+      need.forEach((id) => {
+        const item = tvboxItems.find(video => video.localId === id);
+        if (!item) return;
+        setCards((current) => current[id] ? current : { ...current, [id]: tvboxVideoCard(item, tvboxSource) });
+        if (tvboxDetails[id]) return;
+        tvboxDetail(tvboxSource, item.id)
+          .then((video) => { if (alive) setTVBoxDetails(current => ({ ...current, [id]: video })); })
+          .catch((error) => { if (alive && id === curId) setErr((error as Error).message || "TVBox 详情加载失败"); });
+      });
+      return () => { alive = false; };
+    }
     need.forEach((id) => {
       if (details[id]) return;
       api.video(id).then((d) => { if (alive) setDetails((m) => ({ ...m, [id]: d })); }).catch(() => {});
     });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, videoIds, proxyRetry]);
+  }, [index, videoIds, proxyRetry, tvboxSource?.id, tvboxItems, tvboxDetails]);
 
   /* 吃瓜帖子：直接拿帖子详情（含 video_url） */
   useEffect(() => {
@@ -336,19 +360,31 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
 
   /* 相关推荐：切到当前视频时拉一次 */
   useEffect(() => {
-    if (!curId || kind !== "video") return;
+    if (!curId || kind !== "video" || tvboxSource) return;
     let alive = true;
     setRelated([]);
     api.related(curId).then((r) => { if (alive) setRelated(r?.items || []); }).catch(() => {});
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [curId, kind]);
+  }, [curId, kind, tvboxSource?.id]);
 
   /* 拉播放地址 */
   useEffect(() => {
     if (!curId) return;
     if (playUrls[playKey]) return;
     let alive = true;
+    if (tvboxSource && tvboxItems) {
+      const video = tvboxDetails[curId];
+      if (!video) return () => { alive = false; };
+      try {
+        const streamUrl = tvboxMediaUrl(video, curEp, tvboxLine);
+        setPlayUrls(current => ({ ...current, [playKey]: streamUrl }));
+        addHistory(curId, curEp);
+      } catch (error) {
+        setErr((error as Error).message || "TVBox 播放地址不可用");
+      }
+      return () => { alive = false; };
+    }
     api.play(curId, curEp)
       .then((info) => {
         if (!alive) return;
@@ -379,11 +415,11 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
       .catch((e) => { if (alive) setErr((e as Error).message || "取播放地址失败"); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [curId, curEp, proxyRetry]);
+  }, [curId, curEp, proxyRetry, tvboxSource?.id, tvboxItems, tvboxDetails, tvboxLine]);
 
   /* 剧集预热：相邻集提前取好播放地址，切集秒开 */
   useEffect(() => {
-    if (!curId || kind !== "video") return;
+    if (!curId || kind !== "video" || tvboxSource) return;
     const ep = epMap[curId] || 1;
     const total = episodes.length;
     const want: number[] = [];
@@ -447,7 +483,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
         case "m": case "M": setMuted((v) => !v); break;
         case "l": case "L": onLike(); break;
         case "s": case "S": onFav(); break;
-        case "c": case "C": setPanel("comments"); break;
+        case "c": case "C": if (!tvboxSource) setPanel("comments"); break;
         case "e": case "E": setPanel("episodes"); break;
         default: break;
       }
@@ -837,14 +873,14 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     const on = toggleLikeLocal(curId);
     setHeartBurst((n) => n + 1);
     toast(on ? "已加入喜欢" : "已取消喜欢", on ? "heart" : "info");
-    if (requireLogin()) { if (kind === "post") api.postLike(curId, on).catch(() => {}); else api.like(curId, curEp, on).catch(() => {}); }
+    if (!tvboxSource && requireLogin()) { if (kind === "post") api.postLike(curId, on).catch(() => {}); else api.like(curId, curEp, on).catch(() => {}); }
   };
 
   const onFav = () => {
     if (!curId) return;
     const on = toggleFavLocal(curId);
     toast(on ? "已收藏" : "已取消收藏", on ? "star" : "info");
-    if (requireLogin()) { if (kind === "post") api.postCollect(curId, on).catch(() => {}); else api.collect(curId, on).catch(() => {}); }
+    if (!tvboxSource && requireLogin()) { if (kind === "post") api.postCollect(curId, on).catch(() => {}); else api.collect(curId, on).catch(() => {}); }
   };
 
   const onFollow = () => {
@@ -858,6 +894,11 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   const pickEp = (ep: number) => {
     setEpMap((m) => ({ ...m, [curId]: ep }));
     setPanel(null);
+  };
+
+  const pickTVBoxLine = (line: number) => {
+    setTVBoxLineMap(current => ({ ...current, [curId]: line }));
+    setEpMap(current => ({ ...current, [curId]: 1 }));
   };
 
   const likeCount = useMemo(() => {
@@ -922,7 +963,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
                 </div>
               ) : (
                 <div className="absolute inset-0">
-                  <Img src={detail?.cover || cards[vid]?.cover || posts[vid]?.cover || ""} eager={Math.abs(i - index) <= 1} />
+                  <Img src={tvboxSource ? cards[vid]?.cover || "" : detail?.cover || cards[vid]?.cover || posts[vid]?.cover || ""} eager={Math.abs(i - index) <= 1} />
                   <div className="absolute inset-0" style={{ background: "rgba(0,0,0,.25)" }} />
                 </div>
               )}
@@ -1037,10 +1078,10 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
                     {isFav(curId) ? <IStarF size={27} className="hg-gold" /> : <IStar size={27} className="hg-ink hg-ov-shadow" />}
                     <span className="text-[12px] hg-ink-2 hg-ov-shadow">收藏</span>
                   </Button>
-                  <Button onClick={() => setPanel("comments")} className="flex flex-col items-center gap-1 pressable" aria-label="评论">
+                  {!tvboxSource && <Button onClick={() => setPanel("comments")} className="flex flex-col items-center gap-1 pressable" aria-label="评论">
                     <ICommentF size={26} className="hg-ink hg-ov-shadow" />
                     <span className="text-[12px] hg-ink-2 hg-ov-shadow">评论</span>
-                  </Button>
+                  </Button>}
                   <Button onClick={() => enterFs(isLandscapeCurrent())} className="flex flex-col items-center gap-1 pressable" aria-label="全屏">
                     <IExpand size={26} className="hg-ink hg-ov-shadow" />
                     <span className="text-[12px] hg-ink-2 hg-ov-shadow">全屏</span>
@@ -1067,22 +1108,22 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
 
                 {kind === "video" && (
                   <>
-                    <Button onClick={onLike} aria-label="点赞" className="flex flex-col items-center gap-1 pressable" aria-pressed={isLiked(curId)}>
+                    {!tvboxSource && <Button onClick={onLike} aria-label="点赞" className="flex flex-col items-center gap-1 pressable" aria-pressed={isLiked(curId)}>
                       <span key={heartBurst} className={heartBurst ? "a-pop" : ""}>
                         {isLiked(curId) ? <IHeartF size={30} className="text-neon" /> : <IHeart size={30} className="text-white tsh" />}
                       </span>
                       <span className="text-[12px] text-white/90 tabular-nums">{fmt(likeCount)}</span>
-                    </Button>
+                    </Button>}
 
-                    <Button onClick={() => setPanel("comments")} aria-label="评论" className="flex flex-col items-center gap-1 pressable">
+                    {!tvboxSource && <Button onClick={() => setPanel("comments")} aria-label="评论" className="flex flex-col items-center gap-1 pressable">
                       <ICommentF size={27} className="text-white tsh" />
                       <span className="text-[12px] text-white/90 tabular-nums">{fmt(meta.comment)}</span>
-                    </Button>
+                    </Button>}
 
-                    <Button onClick={onFav} aria-label="收藏" className="flex flex-col items-center gap-1 pressable" aria-pressed={isFav(curId)}>
+                    {!tvboxSource && <Button onClick={onFav} aria-label="收藏" className="flex flex-col items-center gap-1 pressable" aria-pressed={isFav(curId)}>
                       {isFav(curId) ? <IStarF size={27} className="hg-gold" /> : <IStar size={27} className="hg-ink hg-ov-shadow" />}
                       <span className="text-[12px] text-white/90 tabular-nums">{fmt(meta.collect)}</span>
-                    </Button>
+                    </Button>}
 
                     <Button onClick={() => setPanel("episodes")} aria-label="选集" className="flex flex-col items-center gap-1 pressable">
                       <IList size={26} className="text-white tsh" />
@@ -1330,8 +1371,14 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
         <div className={`desktop-dock-panel ${panel ? "is-open" : ""}`}>
           <div className="desktop-dock-inner">
             {panel === "episodes" ? (
-              <EpisodesPanel videoId={curId} episodes={episodes} current={curEp} onPick={pickEp} onClose={() => setPanel(null)} />
-            ) : panel === "comments" ? (
+              <>
+                {tvboxVod && tvboxVod.playGroups.length > 1 && <div className="flex flex-wrap gap-2 px-3 py-2">
+                  {tvboxVod.playGroups.map((group, line) => <Button key={`${group.name}-${line}`} aria-pressed={tvboxLine === line}
+                    onClick={() => pickTVBoxLine(line)} className={`h-7 px-2.5 rounded-(--r-ctl) text-[11px] pressable ${tvboxLine === line ? "bg-primary text-on-primary" : "bg-s3 text-on/85"}`}>{group.name}</Button>)}
+                </div>}
+                <EpisodesPanel videoId={curId} episodes={episodes} current={curEp} onPick={pickEp} onClose={() => setPanel(null)} />
+              </>
+            ) : panel === "comments" && !tvboxSource ? (
               <CommentsPanel videoId={curId} ep={curEp} total={meta.comment} kind={kind} onClose={() => setPanel(null)} />
             ) : null}
           </div>
@@ -1339,7 +1386,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
       ) : (
         <>
           {/* 评论：移动端底部弹层（右侧操作栏「评论」入口） */}
-          <Sheet open={panel === "comments"} onClose={() => setPanel(null)}>
+          <Sheet open={panel === "comments" && !tvboxSource} onClose={() => setPanel(null)}>
             <div className="flex flex-col" style={{ height: "72vh" }}>
               <CommentsPanel videoId={curId} ep={curEp} total={meta.comment} kind={kind} onClose={() => setPanel(null)} />
             </div>
@@ -1383,13 +1430,24 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
                           {!!meta.score && <span className="text-[13px] font-bold text-amber">{meta.score.toFixed(1)} 分</span>}
                           {episodes.length > 0 && <span className="text-[12px] text-mut">共 {episodes.length} 集</span>}
                         </div>
-                        <div className="flex gap-3 mt-2 text-[12px] text-mut">
+                        {!tvboxSource && <div className="flex gap-3 mt-2 text-[12px] text-mut">
                           <span>点赞 {fmt(meta.like)}</span>
                           <span>收藏 {fmt(meta.collect)}</span>
                           <span>评论 {fmt(meta.comment)}</span>
-                        </div>
+                        </div>}
                       </div>
                     </div>
+
+                    {tvboxVod && tvboxVod.playGroups.length > 1 && (
+                      <div className="mt-4">
+                        <div className="text-[12px] font-semibold text-dim mb-2">播放线路</div>
+                        <div className="flex flex-wrap gap-2">
+                          {tvboxVod.playGroups.map((group, line) => <Button key={`${group.name}-${line}`} aria-pressed={tvboxLine === line}
+                            onClick={() => pickTVBoxLine(line)}
+                            className={`h-8 px-3 rounded-(--r-ctl) text-[12px] pressable ${tvboxLine === line ? "bg-primary text-on-primary" : "bg-s3 text-on/85"}`}>{group.name}</Button>)}
+                        </div>
+                      </div>
+                    )}
 
                     {/* 作者 + 关注 */}
                     <Surface className="mt-4 flex items-center gap-2.5 rounded-(--r-md) bg-s2 p-2.5">
@@ -1400,7 +1458,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
                         <Avatar size={34} name={meta.author} hue={220} />
                         <div className="flex-1 min-w-0">
                           <div className="text-[14px] font-semibold text-on truncate">{meta.author}</div>
-                          <div className="text-[12px] text-mut">作者</div>
+                          <div className="text-[12px] text-mut">{tvboxSource ? "数据源" : "作者"}</div>
                         </div>
                       </Button>
                       {meta.authorId > 0 && (
