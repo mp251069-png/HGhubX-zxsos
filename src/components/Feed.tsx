@@ -83,7 +83,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   const setClean = store.setClean;
   const setFs = store.setFs;
 
-  /* 桌面：鼠标闲置 2.8s 自动隐藏播放器 UI（沉浸） */
+  /* 桌面及移动端全屏：闲置 2.8s 自动隐藏播放器 UI（沉浸） */
   const [idle, setIdle] = useState(false);
   const idleTimer = useRef<number | undefined>(undefined);
   const wake = useCallback(() => {
@@ -117,8 +117,8 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     x: number; y: number; startY: number; t: number; timer: number | null;
     mode: "idle" | "hold" | "scrub" | "pan"; base: number; width: number; playing: boolean;
   } | null>(null);
-  /* 单击 / 双击判定：单击净屏，双击暂停 */
-  const lastTapRef = useRef<{ timer: number | null; clean?: boolean; idle?: boolean }>({ timer: null });
+  /* 单击 / 双击判定：普通模式净屏，全屏唤醒控制器；双击暂停 / 续播 */
+  const lastTapRef = useRef<{ timer: number | null; clean?: boolean }>({ timer: null });
   /* 系统是否真的转成了横屏（iOS 原生旋转后为 true） */
   const [vpLandscape, setVpLandscape] = useState(
     () => typeof window !== "undefined" && window.innerWidth > window.innerHeight,
@@ -634,13 +634,12 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
         window.clearTimeout(lastTapRef.current.timer);
         lastTapRef.current.timer = null;
         setClean(lastTapRef.current.clean ?? false);
-        if (!isDesktop && fs) setIdle(lastTapRef.current.idle ?? false);
+        if (!isDesktop && fs) wake();
         videoRef.current?.toggle();
       } else {
         lastTapRef.current.clean = clean;
-        lastTapRef.current.idle = idle;
         setClean(!clean);
-        if (!isDesktop && fs) setIdle(!idle);
+        if (!isDesktop && fs) wake();
         lastTapRef.current.timer = window.setTimeout(() => {
           lastTapRef.current.timer = null;
         }, 230) as unknown as number;
