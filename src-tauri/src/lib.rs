@@ -143,7 +143,7 @@ pub fn run() {
                 let resource = url::form_urlencoded::parse(request.uri().query().unwrap_or("").as_bytes())
                     .find(|(key, _)| key == "u")
                     .map(|(_, value)| playback_log::resource_id(&value));
-                let route = match request.uri().path() { "/hls" => "playlist", "/seg" => "segment_or_key", "/img" => "image", _ => "unknown" };
+                let route = match request.uri().path() { "/hls" | "/hls/playlist.m3u8" => "playlist", "/seg" => "segment_or_key", "/img" => "image", _ => "unknown" };
                 let range = request.headers().get("Range").and_then(|v| v.to_str().ok())
                     .filter(|v| v.len() <= 100 && v.bytes().all(|b| b.is_ascii_digit() || b"bytes=,- ".contains(&b)));
                 let origin_kind = match request_origin.as_deref() { None => "missing", Some("null") => "null", Some(origin) if allowed_frontend_origin(origin) => "app", _ => "other" };
