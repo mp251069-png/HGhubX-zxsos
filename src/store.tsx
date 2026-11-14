@@ -184,6 +184,7 @@ type Store = {
   volume: number; setVolume: (v: number) => void;
   searchHist: string[]; addSearch: (q: string) => void; clearSearchHist: () => void;
   strictSecurity: boolean; strictSecurityReady: boolean; securityPending: boolean; cliRelaxed: boolean; setStrictSecurity: (on: boolean) => Promise<void>;
+  appLockEnabled: boolean; setAppLockEnabled: (on: boolean) => void;
   toasts: Toast[]; toast: (msg: string, icon?: Toast["icon"]) => void;
   /** 线路切换计数：变了就让列表页重挂载，重新拉一遍数据 */
   lineEpoch: number;
@@ -202,6 +203,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [stack, setStack] = useState<Page[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
+  const [appLockEnabled, setAppLockEnabledState] = useState(() => readStorage(STORAGE_KEYS.appLock) === "1");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [lineEpoch, setLineEpoch] = useState(0);
   const [theater, setTheaterState] = useState(false);
@@ -282,6 +284,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSecurityPending(false);
     }
   }, [strictSecurityReady]);
+
+  const setAppLockEnabled = useCallback((on: boolean) => {
+    try {
+      if (on) localStorage.setItem(STORAGE_KEYS.appLock, "1");
+      else localStorage.removeItem(STORAGE_KEYS.appLock);
+    } catch {
+      throw new Error("App 锁定设置保存失败，请检查设备存储空间");
+    }
+    setAppLockEnabledState(on);
+  }, []);
 
   const toast = useCallback((msg: string, icon?: Toast["icon"]) => {
     const id = ++toastSeq.current;
@@ -439,10 +451,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     preferHevc: p.preferHevc, setPreferHevc,
     searchHist: p.searchHist, addSearch, clearSearchHist,
     strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity,
+    appLockEnabled, setAppLockEnabled,
     toasts, toast, lineEpoch,
   }), [theme, themePreference, setTheme, tab, setTab, stack, push, pop, user, loginOpen, logout,
     p, toggleLikeLocal, toggleFavLocal, toggleFollowLocal, addHistory, clearHistory,
     setMuted, setMuteOnStartup, setSwipeEp, setPreferHevc, setVolume, addSearch, clearSearchHist, strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity,
+    appLockEnabled, setAppLockEnabled,
     toasts, toast, lineEpoch, theater, setTheater, fs, setFs, clean, setClean]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

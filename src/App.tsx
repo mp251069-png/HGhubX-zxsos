@@ -1,9 +1,10 @@
 import { LiquidIndicator } from "./components/ios/effects";
 import { Button } from "./components/ios/controls";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStore, type Page, type Tab } from "./store";
 import { isMobile, selfTest } from "./api";
 import { addPluginListener, invoke } from "@tauri-apps/api/core";
+import { authenticate } from "@tauri-apps/plugin-biometric";
 import { runBack } from "./back";
 import Home from "./pages/Home";
 import Search, { RankPage } from "./pages/Search";
@@ -19,7 +20,7 @@ import { ToastHost } from "./components/ui";
 import { DesktopRail, DesktopTitleBar } from "./components/DesktopChrome";
 import ResizeHandles from "./components/ResizeHandles";
 import { tracePlayback } from "./playbackDiagnostics";
-import { IGrid, IGridF, IHome, IHomeF, ISearch, IUser, IUserF, Logo } from "./icons";
+import { IGrid, IGridF, IHome, IHomeF, ILockF, ISearch, IUser, IUserF, Logo } from "./icons";
 
 function TabBar() {
   const { tab, setTab, platform } = useStore();
@@ -226,7 +227,63 @@ function MobileShell() {
 
 /* ============ 入口 ============ */
 export default function App() {
-  const { platform, loginOpen, setLoginOpen, tab, setTab, stack, pop, fs, setFs } = useStore();
+  const { platform, appLockEnabled, loginOpen, setLoginOpen, tab, setTab, stack, pop, fs, setFs } = useStore();
+  const [locked, setLockedState] = useState(() => platform === "ios" && appLockEnabled);
+  const [unlocking, setUnlocking] = useState(false);
+  const [lockError, setLockError] = useState("");
+  const [unlockRequest, setUnlockRequest] = useState(0);
+  const lockedRef = useRef(locked);
+  const lockEnabledRef = useRef(appLockEnabled);
+  const authInFlight = useRef(false);
+  const wasBackgrounded = useRef(false);
+  lockEnabledRef.current = appLockEnabled;
+  const setLocked = (next: boolean) => {
+    lockedRef.current = next;
+    setLockedState(next);
+  };
+  const unlock = useCallback(async () => {
+    if (platform !== "ios" || !lockEnabledRef.current || !lockedRef.current || authInFlight.current) return;
+    authInFlight.current = true;
+    setUnlocking(true);
+    setLockError("");
+    try {
+      await authenticate("解锁 HGhubX", {
+        allowDeviceCredential: true,
+        cancelTitle: "保持锁定",
+        fallbackTitle: "使用设备密码",
+      });
+      setLocked(false);
+    } catch {
+      setLockError("验证未完成，请重试或使用设备密码。应用仍保持锁定。");
+    } finally {
+      authInFlight.current = false;
+      setUnlocking(false);
+    }
+  }, [platform]);
+  useEffect(() => {
+    if (platform !== "ios" || !appLockEnabled || !locked) return;
+    const timer = window.setTimeout(() => { void unlock(); }, 350);
+    return () => window.clearTimeout(timer);
+  }, [platform, appLockEnabled, locked, unlockRequest, unlock]);
+  useEffect(() => {
+    if (platform !== "ios") return;
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        wasBackgrounded.current = true;
+        if (lockEnabledRef.current) setLocked(true);
+        return;
+      }
+      if (wasBackgrounded.current) {
+        wasBackgrounded.current = false;
+        if (lockEnabledRef.current) {
+          setLocked(true);
+          setUnlockRequest((request) => request + 1);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [platform, unlock]);
   useEffect(() => {
     tracePlayback("navigation.change", { tab, stack: stack.map(p => ({ page: p.kind, key: p.key })), login_open: loginOpen });
   }, [tab, stack, loginOpen]);
@@ -299,11 +356,22 @@ export default function App() {
 
   return (
     <>
-      {isMobile ? <MobileShell /> : <DesktopShell />}
-      <LoginModal />
-      <ToastHost />
-      {/* 登录遮罩键盘处理占位 */}
-      {loginOpen && <div className="hidden" onClick={() => setLoginOpen(false)} />}
+      <div inert={locked} aria-hidden={locked}>
+        {isMobile ? <MobileShell /> : <DesktopShell />}
+        <LoginModal />
+        <ToastHost />
+        {/* 登录遮罩键盘处理占位 */}
+        {loginOpen && <div className="hidden" onClick={() => setLoginOpen(false)} />}
+      </div>
+      {locked && platform === "ios" && <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-bg px-8 text-center" role="dialog" aria-modal="true" aria-labelledby="app-lock-title">
+        <div className="mb-5 grid size-[76px] place-items-center rounded-full bg-primary/15 text-primary"><ILockF size={32} /></div>
+        <h1 id="app-lock-title" className="text-[22px] font-bold text-on">App 已锁定</h1>
+        <p className="mt-2 max-w-[300px] text-[14px] leading-relaxed text-mut">使用 Face ID / Touch ID 或设备密码验证后继续</p>
+        <Button disabled={unlocking} onClick={() => { void unlock(); }} className="mt-7 min-h-12 min-w-[220px] rounded-(--r-ctl) bg-primary px-6 text-[15px] font-semibold text-on-primary pressable disabled:opacity-60">
+          {unlocking ? "正在验证…" : "使用 Face ID 解锁"}
+        </Button>
+        {lockError && <p role="alert" className="mt-4 max-w-[300px] text-[13px] text-mut">{lockError}</p>}
+      </div>}
     </>
   );
 }

@@ -1,5 +1,6 @@
 export const STORAGE_KEYS = {
   app: "hghubx_app_v1",
+  appLock: "hghubx_app_lock",
   swipeEp: "hghubx_swipe_ep_v2",
   theme: "hghubx_theme",
   autoLine: "hghubx_auto_line",
@@ -10,6 +11,7 @@ type StorageKey = typeof STORAGE_KEYS[keyof typeof STORAGE_KEYS];
 // 旧名称仅用于升级迁移，运行期始终向 HGhubX 的键写入。
 const LEGACY_KEYS: Record<StorageKey, string> = {
   hghubx_app_v1: "hghub_app_v1",
+  hghubx_app_lock: "hghub_app_lock",
   hghubx_swipe_ep_v2: "hghub_swipe_ep_v2",
   hghubx_theme: "hghub_theme",
   hghubx_auto_line: "hg.autoLine",
