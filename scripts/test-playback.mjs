@@ -155,6 +155,16 @@ async function gestureChecks(page) {
       bubbles:true, pointerId:91, pointerType:'touch', button:0, clientX:bounds.x+100, clientY:bounds.y+100,
     }));
   });
+  await page.evaluate(() => window.playerSeekFixture.setFullscreen(true));
+  await page.waitForFunction(() => document.querySelector('.player-root')?.classList.contains('fs-immersive'));
+  const controlsVisible = () => page.locator('.player-root').evaluate(el => !!el.querySelector('button[aria-label="退出全屏"]'));
+  await tap();
+  await page.waitForTimeout(100);
+  assert.equal(await controlsVisible(), true, 'A landscape tap must wake controls, not hide them immediately');
+  await page.waitForFunction(() => !document.querySelector('.player-root')?.querySelector('button[aria-label="退出全屏"]'), undefined, { timeout: 5000 });
+  await tap();
+  await page.waitForFunction(() => !!document.querySelector('.player-root')?.querySelector('button[aria-label="退出全屏"]'));
+  assert.equal(await controlsVisible(), true, 'A tap must reveal controls after the idle timeout');
   const clean = () => page.locator('.player-root').getAttribute('data-clean');
   const start = Date.now();
   await tap();
@@ -485,7 +495,7 @@ try {
   report.browser_version = browser.version();
   for (const name of scenarios) {
     const dir = join(output, name); await mkdir(dir);
-    const context = await browser.newContext({ ...(name === "gesture" || name === "ios-fallback" ? {userAgent:"Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 Version/17.1 Mobile/15E148 Safari/604.1",hasTouch:true} : {}), viewport: { width: 1000, height: 900 } });
+    const context = await browser.newContext({ ...(name === "gesture" || name === "ios-fallback" ? {userAgent:"Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 Version/17.1 Mobile/15E148 Safari/604.1",hasTouch:true} : {}), viewport: { width: 1000, height: name === "gesture" ? 600 : 900 } });
     await context.exposeBinding("collectPlaybackLogs", (_source, entries) => {
       for (const e of entries) jsonl(join(dir, "playback.jsonl"), { ts: e.data.at, event: `web.${e.event}`, data: e.data, transport: "browser-fixture" });
     });
