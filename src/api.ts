@@ -57,7 +57,8 @@ export const cover = (url?: string, _w = 480) => {
 };
 
 /** 播放列表：经本地协议改写分片地址，规避 CORS 与防盗链。 */
-export const playlist = (url: string) => `${LOCAL}/hls?u=${encodeURIComponent(url)}`;
+export const playlistRoute = (target: typeof platform = platform) => target === "ios" ? "/hls/playlist.m3u8" : "/hls";
+export const playlist = (url: string) => `${LOCAL}${playlistRoute()}?u=${encodeURIComponent(url)}`;
 
 /* ── 调用封装 ───────────────────────────────────────────── */
 
@@ -298,7 +299,7 @@ export async function selfTest(): Promise<string> {
   try {
     const info = await api.play(117, 3);
     steps.push(`play:${info?.video_url ? "ok" : "empty"}`);
-    const hlsUrl = `${LOCAL}/hls?u=${encodeURIComponent(info.video_url)}`;
+    const hlsUrl = playlist(info.video_url);
     const r1 = await fetch(hlsUrl);
     const txt = await r1.text();
     steps.push(`hls:${r1.status}/${txt.length}/${txt.startsWith("#EXTM3U") ? "m3u8" : "bad"}`);
