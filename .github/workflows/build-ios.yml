@@ -12,6 +12,7 @@ jobs:
       APPLE_DEVELOPMENT_TEAM: "ABCDE12345"
     steps:
       - uses: actions/checkout@v7
+
       - uses: pnpm/action-setup@v6
         with:
           version: 10
