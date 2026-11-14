@@ -140,9 +140,9 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   const curId = videoIds[index];
   const tvboxItem = tvboxItems?.find(item => item.localId === curId);
   const tvboxVod = tvboxDetails[curId];
-  const tvboxLine = tvboxLineMap[curId] ?? preferredTVBoxLine(tvboxVod);
-  const detail = tvboxSource && tvboxVod ? tvboxDetailModel(tvboxVod, tvboxSource, tvboxLine) : details[curId];
   const curEp = epMap[curId] || 1;
+  const tvboxLine = tvboxLineMap[curId] ?? preferredTVBoxLine(tvboxVod, curEp);
+  const detail = tvboxSource && tvboxVod ? tvboxDetailModel(tvboxVod, tvboxSource, tvboxLine) : details[curId];
   const playKey = tvboxSource ? `${curId}:${curEp}:line:${tvboxLine}` : `${curId}:${curEp}`;
   const mainUrl = playUrls[playKey] || "";
   const hevcUrl = hevcUrls[playKey] || "";
