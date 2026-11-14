@@ -14,14 +14,14 @@ import { createServer as createViteServer } from "vite";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { values: args } = parseArgs({ options: {
   "media-dir": { type: "string" }, output: { type: "string" }, "browser-executable": { type: "string" },
-  scenarios: { type: "string", default: "seek,legacy,stall,lifecycle,mms,gesture,proxy" }, help: { type: "boolean" },
+  scenarios: { type: "string", default: "seek,legacy,stall,lifecycle,mms,gesture,proxy,ios-fallback" }, help: { type: "boolean" },
 } });
 if (args.help) {
-  console.log("pnpm test:playback [--media-dir DIR] [--output NEW_DIR] [--browser-executable PATH] [--scenarios seek,legacy,stall,lifecycle,mms,gesture,proxy]");
+  console.log("pnpm test:playback [--media-dir DIR] [--output NEW_DIR] [--browser-executable PATH] [--scenarios seek,legacy,stall,lifecycle,mms,gesture,proxy,ios-fallback]");
   process.exit(0);
 }
 const scenarios = args.scenarios.split(",");
-assert(scenarios.length && scenarios.every(s => ["seek", "legacy", "stall", "lifecycle", "mms", "gesture", "proxy"].includes(s)), "Unknown scenario");
+assert(scenarios.length && scenarios.every(s => ["seek", "legacy", "stall", "lifecycle", "mms", "gesture", "proxy", "ios-fallback"].includes(s)), "Unknown scenario");
 const output = resolve(args.output || join(root, "test-results", "playback", new Date().toISOString().replace(/[:.]/g, "-")));
 await mkdir(dirname(output), { recursive: true });
 await mkdir(output); // Refuse to overwrite artifacts from an earlier run.
@@ -444,6 +444,32 @@ async function proxyRecoveryCheck(page) {
   return { players, failed_api_resolution_retried: true };
 }
 
+async function iosFallbackCheck(page) {
+  const players = [];
+  for (const legacy of [false, true]) {
+    let directRequested = false;
+    const onRequest = request => {
+      if (request.url() === "https://media.fixture.invalid/list.m3u8") directRequested = true;
+    };
+    page.on("request", onRequest);
+    await page.addInitScript(() => Object.defineProperty(window, "MediaSource", { configurable: true, value: undefined }));
+    await page.route("https://media.fixture.invalid/**", route => route.abort("failed"));
+    try {
+      await page.goto(`${report.ui}/tests/player-seek.html?diagnostics=1&proxy=${encodeURIComponent(report.media)}${legacy ? "&legacy=1" : ""}`);
+      await page.waitForFunction(() => document.querySelector("video")?.src === "https://media.fixture.invalid/list.m3u8");
+      await page.waitForTimeout(250);
+      const state = await page.locator("video").evaluate(video => ({ src: video.src, protocol: new URL(video.src).protocol }));
+      assert.equal(state.protocol, "https:", "iOS fallback must use HTTPS only");
+      assert(directRequested, "Native source rejection must retry the original playback URL");
+      players.push({ player: legacy ? "legacy" : "feed", https_fallback_requested: true, original_src_retained: true });
+    } finally {
+      page.off("request", onRequest);
+      await page.unroute("https://media.fixture.invalid/**");
+    }
+  }
+  return { players };
+}
+
 try {
   let mediaDir = args["media-dir"] && resolve(args["media-dir"]);
   if (!mediaDir) {
@@ -459,7 +485,7 @@ try {
   report.browser_version = browser.version();
   for (const name of scenarios) {
     const dir = join(output, name); await mkdir(dir);
-    const context = await browser.newContext({ ...(name === "gesture" ? {userAgent:"Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 Version/17.1 Mobile/15E148 Safari/604.1",hasTouch:true} : {}), viewport: { width: 1000, height: 900 } });
+    const context = await browser.newContext({ ...(name === "gesture" || name === "ios-fallback" ? {userAgent:"Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 Version/17.1 Mobile/15E148 Safari/604.1",hasTouch:true} : {}), viewport: { width: 1000, height: 900 } });
     await context.exposeBinding("collectPlaybackLogs", (_source, entries) => {
       for (const e of entries) jsonl(join(dir, "playback.jsonl"), { ts: e.data.at, event: `web.${e.event}`, data: e.data, transport: "browser-fixture" });
     });
@@ -469,6 +495,9 @@ try {
     // Nothing in these tests should contact an upstream service.
     await context.route("**/*", route => {
       const raw = route.request().url(), url = new URL(raw), mapped = fixtureMediaUrl(raw);
+      if (url.protocol === "hg:" && url.hostname === "localhost") {
+        return route.fulfill({ status: 200, contentType: "application/vnd.apple.mpegurl", body: "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:2,\nsegment.ts\n#EXT-X-ENDLIST\n" });
+      }
       if (mapped !== raw) return route.continue({ url: mapped });
       if ([report.ui, report.media].includes(url.origin)) return route.continue();
       externalRequests.push({ protocol: url.protocol, host: url.hostname }); return route.abort("blockedbyclient");
@@ -482,10 +511,13 @@ try {
     const result = { name, status: "running", started: new Date().toISOString() }; report.cases.push(result);
     let deadline;
     try {
-      const action = name === "proxy" ? proxyRecoveryCheck(page) : name === "gesture" ? gestureChecks(page) : name === "seek" || name === "legacy" ? seekChecks(page, name === "legacy") : name === "stall" ? stallCheck(page) : name === "mms" ? managedMediaCheck(page) : lifecycleCheck(page);
+      const action = name === "proxy" ? proxyRecoveryCheck(page) : name === "ios-fallback" ? iosFallbackCheck(page) : name === "gesture" ? gestureChecks(page) : name === "seek" || name === "legacy" ? seekChecks(page, name === "legacy") : name === "stall" ? stallCheck(page) : name === "mms" ? managedMediaCheck(page) : lifecycleCheck(page);
       result.metrics = await Promise.race([action, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("Scenario exceeded 45 seconds")), 45000); })]);
       assert.deepEqual(pageErrors, [], "Browser script errors");
-      assert.deepEqual(externalRequests, [], "Unexpected external network requests");
+      const unexpectedExternalRequests = name === "ios-fallback"
+        ? externalRequests.filter(request => !(request.protocol === "https:" && request.host === "media.fixture.invalid"))
+        : externalRequests;
+      assert.deepEqual(unexpectedExternalRequests, [], "Unexpected external network requests");
       result.status = "passed"; console.log(`PASS ${name}: ${JSON.stringify(result.metrics)}`);
     } catch (error) {
       result.status = "failed"; result.error = error.message;
