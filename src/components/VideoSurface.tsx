@@ -1,6 +1,7 @@
 import { useEffect, useImperativeHandle, useRef, forwardRef, useState } from "react";
 import Hls from "hls.js";
 import { isLocalMedia, platform, playlist } from "../api";
+import { tryIosHttpsFallback } from "../iosHttpsFallback";
 import { mediaErrorMessage } from "../mediaErrors";
 import { mediaHost, mediaResource, observeHls, usePlayerDiagnostics } from "../playbackDiagnostics";
 import { usePlaybackActivity } from "../usePlaybackActivity";
@@ -50,6 +51,7 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
 ) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const nativeFallbackRef = useRef({ src: "", attempted: false });
   const recoverCountRef = useRef(0);
   const recoverTimerRef = useRef<number | null>(null);
   const nearEndFiredRef = useRef(false);
@@ -219,6 +221,8 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
 
   const handleVideoError = () => {
     if (hlsRef.current) return;
+    const video = videoRef.current;
+    if (video && tryIosHttpsFallback(video, src, nativeFallbackRef.current, activity, trace)) return;
     onError?.(mediaErrorMessage(videoRef.current?.error ?? null));
   };
 

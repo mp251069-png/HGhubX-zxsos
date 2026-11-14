@@ -7,6 +7,7 @@ import { mediaErrorMessage } from "../mediaErrors";
 import { mediaHost, mediaResource, observeHls, usePlayerDiagnostics } from "../playbackDiagnostics";
 import { usePlaybackActivity } from "../usePlaybackActivity";
 import { useProxyPlaybackRecovery } from "../useProxyPlaybackRecovery";
+import { tryIosHttpsFallback } from "../iosHttpsFallback";
 import { useSeekInput } from "../useSeekInput";
 import PlaybackLock from "./PlaybackLock";
 import { ICompress, IExpand, ILockF, IPauseF, IPlayF, IVol, IVolMute } from "../icons";
@@ -35,6 +36,7 @@ export default function Player({
   const wrapRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const recoverCountRef = useRef(0);
+  const nativeFallbackRef = useRef({ src: "", attempted: false });
   const { trace, requestSeek } = usePlayerDiagnostics(videoRef, hlsRef, { view: "post_detail", ...diagnosticContext, active, resource: mediaResource(src) });
   const activity = usePlaybackActivity(videoRef, hlsRef, { active, autoPlay: !!autoPlay, src, trace });
   const proxyRecovery = useProxyPlaybackRecovery(videoRef, src, activity, trace);
@@ -218,6 +220,10 @@ export default function Player({
         onEnded={() => { if (activity.isActive()) onEnded?.(); }}
         onError={() => {
           if (hlsRef.current) return;
+          if (videoRef.current && tryIosHttpsFallback(videoRef.current, src, nativeFallbackRef.current, activity, trace)) {
+            setWaiting(true);
+            return;
+          }
           setWaiting(false);
           setPlaying(false);
           setErrMsg(mediaErrorMessage(videoRef.current?.error ?? null));
