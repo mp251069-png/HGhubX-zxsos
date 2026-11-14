@@ -10,7 +10,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const output = join(root, "test-results", "mobile-layout", new Date().toISOString().replace(/[:.]/g, "-"));
 const userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1";
 const viewports = [{ width: 320, height: 694 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }];
-const tabs = ["首页", "搜索", "分类", "我的"];
+const tabs = ["首页", "搜索", "分类", "TVBox", "我的"];
 const report = {
   environment: { browser: "Chromium with iPhone UA", transport: "real App; Tauri IPC mocked; no upstream traffic", limitation: "Does not replace native iOS/WKWebView verification", userAgent },
   cases: [], external: [], pageErrors: [],
@@ -34,6 +34,7 @@ try {
         if (cmd === "playback_log_status") return Promise.resolve({ enabled: false, path: null, error: null });
         if (cmd === "debug_log") return Promise.resolve();
         if (cmd === "line_auto") return Promise.resolve({ base: "https://fixture.invalid", previous: "https://fixture.invalid", switched: false, pick: { tier: "main", ms: 1, reason: "fixture", candidates: [] } });
+        if (cmd === "tvbox_fetch") return Promise.resolve({ code: 1, page: 1, pagecount: 1, total: 1, data: { class: [{ type_id: "1", type_name: "电影" }], list: [{ vod_id: "movie-1", vod_name: "Fixture 影视", vod_year: "2026", vod_play_from: "线路一", vod_play_url: "正片$https://media.fixture.invalid/movie.mp4" }] } });
         if (["api_feed", "api_category", "api_posts", "api_original_videos", "api_post_category", "api_search_hot"].includes(cmd)) return Promise.resolve(emptyPage);
         // App's development-only playback self-test must not fetch media upstream.
         if (cmd === "api_play") return Promise.reject("Layout fixture has no playback media");
@@ -63,6 +64,10 @@ try {
     for (const [index, name] of tabs.entries()) {
       await nav.getByRole("button", { name, exact: true }).click();
       await page.waitForFunction(label => document.querySelector('.hg-tabbar button[aria-current="page"]')?.textContent === label, name);
+      if (name === "TVBox") {
+        await page.getByRole("heading", { name: "TVBox 影视" }).waitFor();
+        await page.getByRole("button", { name: "添加或导入 TVBox 源" }).waitFor();
+      }
       // Keep the production transition enabled and measure its final position.
       await page.locator(".hg-drop").evaluate(async el => {
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -82,6 +87,26 @@ try {
     result.screenshot = `${viewport.width}x${viewport.height}-full.png`;
     await page.screenshot({ path: join(output, result.screenshot), fullPage: true });
   }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => {
+    localStorage.setItem("hghubx_tvbox_sources_v1", JSON.stringify([
+      { id: "fixture-a", name: "Fixture A", url: "https://tv-a.fixture.invalid/api.php/provide/vod/" },
+      { id: "fixture-b", name: "Fixture B", url: "https://tv-b.fixture.invalid/api.php/provide/vod/" },
+    ]));
+    localStorage.setItem("hghubx_tvbox_active_v1", "fixture-a");
+    window.dispatchEvent(new CustomEvent("hghubx:tvbox-source-changed"));
+  });
+  await nav.getByRole("button", { name: "TVBox", exact: true }).click();
+  await page.getByText("Fixture 影视", { exact: true }).waitFor();
+  await page.getByLabel("TVBox 数据源").selectOption("fixture-b");
+  await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).host === "tv-b.fixture.invalid"));
+  await page.getByRole("button", { name: "电影", exact: true }).click();
+  await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).searchParams.get("t") === "1"));
+  const tvboxSearch = page.getByRole("textbox", { name: "搜索 TVBox 影片" });
+  await tvboxSearch.fill("测试片");
+  await tvboxSearch.press("Enter");
+  await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).searchParams.get("wd") === "测试片"));
+  report.tvbox_browse = { source_switch: true, category_filter: true, keyword_search: true, catalog_visible: true };
   report.ipc = await page.evaluate(() => ({ calls: window.mobileLayoutFixture.calls.map(call => call.cmd), unexpected: window.mobileLayoutFixture.unexpected }));
   assert.deepEqual(report.ipc.unexpected, [], "No unexpected Tauri calls");
   assert.deepEqual(report.pageErrors, [], "No page errors");
