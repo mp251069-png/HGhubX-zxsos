@@ -10,6 +10,7 @@ import { copyPlaybackLog, initPlaybackLog, setPlaybackLog, tracePlayback, usePla
 import { formatNetDiag, shortVerdict } from "../netDiagReport";
 import { copyText } from "../clipboard";
 import { IBack, IBoltF, IBroom, IChevR, IHeart, IInfo, ILink, ILockF, IMoon, IRefresh, ISun, IVolMute } from "../icons";
+import { authenticate, checkStatus } from "@tauri-apps/plugin-biometric";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return <>
@@ -21,7 +22,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 /* 独立设置页：线路 / 外观 / 播放 / 本地数据 / 清理缓存 / 网络诊断 / 关于
    入口：Windows 侧栏「设置」、Android「我的」右上角齿轮 */
 export default function Settings({ onBack, wide }: { onBack: () => void; wide: boolean }) {
-  const { theme, themePreference, setTheme, favs, history, muteOnStartup, setMuteOnStartup, preferHevc, setPreferHevc, strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity, toast } = useStore();
+  const { platform, theme, themePreference, setTheme, favs, history, muteOnStartup, setMuteOnStartup, preferHevc, setPreferHevc, strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity, appLockEnabled, setAppLockEnabled, toast } = useStore();
   const [about, setAbout] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [lineOpen, setLineOpen] = useState(false);
@@ -37,6 +38,7 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
   const [diagnosing, setDiagnosing] = useState(false);
   const [diagReport, setDiagReport] = useState<string | null>(null);
   const [copyingReport, setCopyingReport] = useState(false);
+  const [appLockPending, setAppLockPending] = useState(false);
 
   useEffect(() => { void initPlaybackLog(); }, []);
 
@@ -82,6 +84,31 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
       setUpdating("");
     }
   };
+  const changeAppLock = async (enabled: boolean) => {
+    if (appLockPending) return;
+    setAppLockPending(true);
+    try {
+      if (enabled) {
+        const status = await checkStatus();
+        if (!status.isAvailable) {
+          toast(`此设备暂不可用 Face ID / Touch ID${status.error ? `：${status.error}` : ""}`, "info");
+          return;
+        }
+      }
+      await authenticate(enabled ? "开启 HGhubX App 锁定" : "关闭 HGhubX App 锁定", {
+        allowDeviceCredential: true,
+        cancelTitle: "取消",
+        fallbackTitle: "使用设备密码",
+      });
+      setAppLockEnabled(enabled);
+      toast(enabled ? "已开启 App 锁定" : "已关闭 App 锁定", "ok");
+    } catch (e) {
+      const error = e as { message?: string; code?: string };
+      toast(error.code === "userCancel" ? "已取消，设置未更改" : `验证失败，设置未更改${error.message ? `：${error.message}` : ""}`, "info");
+    } finally {
+      setAppLockPending(false);
+    }
+  };
 
   return (
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
@@ -110,6 +137,18 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
               </SegmentedControl>
             </div>
           </Section>
+
+          {platform === "ios" && <Section title="隐私与安全">
+            <div className="flex items-center gap-3 px-3.5 py-3">
+              <span className="ios-setting-icon"><ILockF size={16} /></span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[14px] text-on">App 上锁</div>
+                <div className="text-[12px] text-mut">离开后自动锁定；返回时使用 Face ID / Touch ID 或设备密码解锁</div>
+              </div>
+              <Toggle label="App 上锁" on={appLockEnabled} disabled={appLockPending}
+                onChange={(on) => { void changeAppLock(on); }} />
+            </div>
+          </Section>}
 
           <Section title="播放">
             <div className="flex items-center gap-3 px-3.5 py-3">
