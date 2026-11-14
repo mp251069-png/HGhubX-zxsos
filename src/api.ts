@@ -43,8 +43,18 @@ export const LOCAL =
 export const isLocalMedia = (src: string) => src.startsWith(`${LOCAL}/`);
 
 /** 封面：经本地协议解密（站点封面是 AES 密文）。 */
-export const cover = (url?: string, _w = 480) =>
-  url ? `${LOCAL}/img?u=${encodeURIComponent(url)}` : "";
+export const cover = (url?: string, _w = 480) => {
+  if (!url) return "";
+  // TVBox cards already carry the local image-proxy URL. Img() also calls
+  // cover(), so keep that URL intact instead of proxying the proxy as an image.
+  if (isLocalMedia(url)) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/img" && parsed.searchParams.has("u")) return url;
+    } catch { /* Non-URL inputs are handled as upstream URLs below. */ }
+  }
+  return `${LOCAL}/img?u=${encodeURIComponent(url)}`;
+};
 
 /** 播放列表：经本地协议改写分片地址，规避 CORS 与防盗链。 */
 export const playlist = (url: string) => `${LOCAL}/hls?u=${encodeURIComponent(url)}`;

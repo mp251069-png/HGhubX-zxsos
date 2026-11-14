@@ -254,20 +254,28 @@ export async function tvboxDetail(source: TVBoxSource, vodId: string): Promise<T
   return video;
 }
 
-/** Prefer explicit media over embedded player pages; no source code or parser is run. */
-export function preferredTVBoxLine(video: TVBoxVod | undefined): number {
+type TVBoxMediaKind = "hls" | "file" | null;
+
+/** Identify only media formats declared by the URL itself; never inspect or run a player page. */
+function explicitTVBoxMediaKind(raw: string): TVBoxMediaKind {
+  try {
+    const url = new URL(raw);
+    const path = url.pathname.toLowerCase();
+    const values = ["format", "type", "mime"].map(key => (url.searchParams.get(key) ?? "").toLowerCase());
+    if (/\.(?:mp4|m4v|mov|webm)$/.test(path)
+      || values.some(value => /^(?:mp4|m4v|video\/mp4)$/.test(value))) return "file";
+    if (/\.m3u8$/.test(path)
+      || values.some(value => /^(?:m3u8|hls|application\/(?:vnd\.apple\.mpegurl|x-mpegurl))$/.test(value))) return "hls";
+    return null;
+  } catch { return null; }
+}
+
+/** Prefer explicit media over embedded player pages for the requested episode; never run a source parser. */
+export function preferredTVBoxLine(video: TVBoxVod | undefined, episode = 1): number {
   const groups = video?.playGroups ?? [];
-  const direct = groups.findIndex(group => {
-    const raw = group.episodes[0]?.url;
-    if (!raw) return false;
-    try {
-      const url = new URL(raw);
-      return /\.(?:m3u8|mp4|m4v|mov|webm)$/i.test(url.pathname)
-        || ["format", "type", "mime"].some(key => /^(?:m3u8|hls|mp4|m4v|video\/mp4|application\/(?:vnd\.apple\.mpegurl|x-mpegurl))$/i.test(url.searchParams.get(key) ?? ""));
-    } catch { return false; }
-  });
+  const direct = groups.findIndex(group => explicitTVBoxMediaKind(group.episodes[episode - 1]?.url ?? "") !== null);
   if (direct >= 0) return direct;
-  const hinted = groups.findIndex(group => /m3u8|hls|mp4/i.test(group.name) && group.episodes.length > 0);
+  const hinted = groups.findIndex(group => /m3u8|hls|mp4/i.test(group.name) && !!group.episodes[episode - 1]);
   return hinted >= 0 ? hinted : 0;
 }
 
@@ -285,12 +293,7 @@ export function tvboxMediaUrl(video: TVBoxVod | undefined, episode: number, grou
 export function tvboxPlaybackSource(raw: string): string {
   const url = new URL(raw);
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("只支持 HTTP(S) 视频地址");
-  const path = url.pathname.toLowerCase();
-  const declaredMp4 = ["format", "type", "mime"].some(key => {
-    const value = (url.searchParams.get(key) ?? "").toLowerCase();
-    return value === "mp4" || value === "video/mp4" || value === "m4v";
-  });
-  return /\.(?:mp4|m4v|mov|webm)$/.test(path) || declaredMp4
+  return explicitTVBoxMediaKind(url.toString()) === "file"
     ? directMedia(url.toString())
     : playlist(url.toString());
 }
