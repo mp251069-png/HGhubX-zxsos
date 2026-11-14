@@ -20,6 +20,7 @@ mod playback_log;
 mod proxy;
 mod search_hot;
 mod session;
+mod tvbox;
 
 use api::Api;
 use tauri::Manager;
@@ -205,6 +206,7 @@ pub fn run() {
             api::security_set,
             api::debug_log,
             api::net_diag,
+            api::tvbox_fetch,
             api::line_state,
             api::line_set,
             api::line_custom_set,

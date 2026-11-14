@@ -58,6 +58,12 @@ pub async fn net_diag() -> Result<Value, String> {
     Ok(crate::net::diagnose().await)
 }
 
+/// Fetch a bounded JSON document from a user-configured TVBox API source.
+#[tauri::command]
+pub async fn tvbox_fetch(url: String) -> Result<Value, String> {
+    crate::tvbox::fetch_json(&url).await
+}
+
 /* ───────────────────────── 线路（数据源） ───────────────────────── */
 // Network probes run without holding this lock. Manual selection/cancellation
 // invalidates older probes; applying a result is serialized with manual writes.
