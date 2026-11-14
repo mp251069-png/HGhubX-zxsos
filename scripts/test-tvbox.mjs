@@ -72,23 +72,85 @@ try {
   assert.equal(new URL(tvbox.tvboxPlaybackSource("https://cdn.fixture.invalid/live/channel/123")).pathname, "/hls",
     "Extensionless HLS endpoints stay on the manifest-rewriting route");
 
+  const mixedLines = tvbox.parseTVBoxPage({ list: [{ vod_id: "mixed", vod_name: "网页与直连", vod_play_from: "web$$$lzm3u8",
+    vod_play_url: "第1集$https://cdn.fixture.invalid/share/player$$$第1集$https://cdn.fixture.invalid/video/index.m3u8" }] }, source).items[0];
+  assert.equal(tvbox.preferredTVBoxLine(mixedLines), 1, "Explicit HLS must be preferred over a first-line player webpage");
+  assert.equal(tvbox.preferredTVBoxLine({ ...mixedLines, playGroups: [{ name: "web", episodes: [{ name: "1", url: "https://cdn.fixture.invalid/share/1" }] },
+    { name: "HLS", episodes: [{ name: "1", url: "https://cdn.fixture.invalid/opaque/1" }] }] }), 1, "HLS route hints support extensionless media");
+  assert.equal(tvbox.preferredTVBoxLine(undefined), 0);
+
   const config = tvbox.parseTVBoxConfig({ sites: [
     { key: "api-a", name: "API A", type: 1, api: "https://api-a.fixture.invalid/vod" },
     { key: "api-b", api: "https://api-b.fixture.invalid/vod" },
     { key: "spider", type: 3, api: "https://spider.fixture.invalid/js/spider.js" },
     { key: "csp", api: "csp_CustomSpider" },
+    { key: "xml", type: 0, api: "https://xml.fixture.invalid/api.php" },
   ] });
   assert.deepEqual(config.sites, [
     { name: "API A", url: "https://api-a.fixture.invalid/vod" },
     { name: "api-b", url: "https://api-b.fixture.invalid/vod" },
   ]);
-  assert.equal(config.spiderSkipped, 2);
+  assert.equal(config.spiderSkipped, 3);
+
+  const repositories = tvbox.parseTVBoxRepositories({ urls: [
+    { name: "标题但无地址" },
+    { name: "相对仓", url: "./repos/a.json" },
+    { name: "重复仓", url: "https://repo.fixture.invalid/a.json" },
+    { name: "重复仓别名", url: "https://repo.fixture.invalid/a.json" },
+    { name: "凭据", url: "https://user:pass@repo.fixture.invalid/private.json" },
+    { name: "片段", url: "https://repo.fixture.invalid/a.json#config" },
+    { name: "危险协议", url: "javascript:alert(1)" },
+  ] }, "https://index.fixture.invalid/config/niuber.json");
+  assert.deepEqual(repositories, [
+    { name: "相对仓", url: "https://index.fixture.invalid/config/repos/a.json" },
+    { name: "重复仓", url: "https://repo.fixture.invalid/a.json" },
+  ], "Repository indexes ignore title-only, unsafe and duplicate entries");
+  assert.deepEqual(tvbox.parseTVBoxRepositories({ data: { urls: [{ name: "嵌套仓", url: "/repo.json" }] } },
+    "https://index.fixture.invalid/root.json"), [{ name: "嵌套仓", url: "https://index.fixture.invalid/repo.json" }]);
+  assert.deepEqual(tvbox.parseTVBoxRepositories({ urls: [{ name: "空仓" }] }, "https://index.fixture.invalid/a.json"), []);
+
+  assert.deepEqual(tvbox.parseTVBoxPage({ urls: [{ name: "not an API" }] }, source).items, [],
+    "Arbitrary JSON is not interpreted as a populated API response");
 
   const searchUrl = new URL(tvbox.buildTVBoxApiUrl(source, { ac: "list", pg: 3, wd: "测试 片" }));
   assert.equal(searchUrl.searchParams.get("token"), "x", "Existing source query parameters are preserved");
   assert.equal(searchUrl.searchParams.get("ac"), "list");
   assert.equal(searchUrl.searchParams.get("pg"), "3");
   assert.equal(searchUrl.searchParams.get("wd"), "测试 片", "Unicode search terms are encoded by URLSearchParams");
+
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const fetchCalls = [];
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { __TAURI_INTERNALS__: {
+    invoke: async (command, args) => {
+      assert.equal(command, "tvbox_fetch");
+      fetchCalls.push(args.url);
+      const path = new URL(args.url).pathname;
+      if (path === "/index.json") return { urls: [{ name: "子配置", url: "/spider.json" }] };
+      if (path === "/spider.json") return { sites: [{ name: "Spider", type: 3, api: "csp_Test" }] };
+      if (path === "/empty-api") return { list: [], class: [], page: 1 };
+      return { message: "arbitrary JSON is not a VOD API" };
+    },
+  } } });
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+    getItem: () => null,
+    setItem: () => assert.fail("Repository indexes and invalid configs must not be persisted as sources"),
+  } });
+  try {
+    const result = await tvbox.importTVBoxSources("https://index.fixture.invalid/index.json");
+    assert.deepEqual(result.sources, []);
+    assert.equal(result.repositories[0].url, "https://index.fixture.invalid/spider.json");
+    assert.equal(fetchCalls.length, 1, "Repository discovery must not recursively fetch children");
+    await assert.rejects(tvbox.importTVBoxSources("https://index.fixture.invalid/spider.json"), /没有标准 JSON API/);
+    await assert.rejects(tvbox.importTVBoxSources("https://index.fixture.invalid/arbitrary.json"), /标准 JSON API/);
+    const empty = await tvbox.tvboxList({ ...source, url: "https://index.fixture.invalid/empty-api" });
+    assert.deepEqual(empty.items, [], "An actual empty-list API remains valid");
+  } finally {
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+    else delete globalThis.window;
+    if (originalStorage) Object.defineProperty(globalThis, "localStorage", originalStorage);
+    else delete globalThis.localStorage;
+  }
 
   assert.throws(() => tvbox.tvboxMediaUrl({ ...page.items[0], playGroups: [] }, 1), /需要解析器/);
   console.log("TVBox checks passed: nested JSON, endpoint-relative URLs, nested/top-level paging, categories, multiple play groups, HLS/MP4 proxy selection, image proxy, config Spider filtering and unsupported playback handling.");

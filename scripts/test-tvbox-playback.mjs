@@ -45,8 +45,8 @@ async function serveFixture() {
     if (req.method === "OPTIONS") { res.writeHead(204, { ...common, "Access-Control-Allow-Headers": "Range" }); res.end(); return; }
     if (url.pathname === "/api.php/provide/vod/") {
       const detail = url.searchParams.get("ac") === "detail";
-      const payload = detail ? { code: 1, list: [{ vod_id: "fixture-vod-1", vod_name: "本地 MP4 回归", vod_play_from: "本地直链", vod_play_url: "第1集$http://media.fixture.invalid/tvbox-playback-sample.mp4", vod_content: "只用于本地真实播放回归" }] }
-        : { code: 1, page: 1, pagecount: 1, total: 1, list: [{ vod_id: "fixture-vod-1", vod_name: "本地 MP4 回归", vod_play_from: "本地直链", vod_play_url: "第1集$http://media.fixture.invalid/tvbox-playback-sample.mp4" }] };
+      const payload = detail ? { code: 1, list: [{ vod_id: "fixture-vod-1", vod_name: "本地 MP4 回归", vod_play_from: "网页播放器$$$本地直链", vod_play_url: "网页$http://media.fixture.invalid/share/unsupported$$$第1集$http://media.fixture.invalid/tvbox-playback-sample.mp4", vod_content: "只用于本地真实播放回归" }] }
+        : { code: 1, page: 1, pagecount: 1, total: 1, list: [{ vod_id: "fixture-vod-1", vod_name: "本地 MP4 回归", vod_play_from: "网页播放器$$$本地直链", vod_play_url: "网页$http://media.fixture.invalid/share/unsupported$$$第1集$http://media.fixture.invalid/tvbox-playback-sample.mp4" }] };
       const body = Buffer.from(JSON.stringify(payload));
       res.writeHead(200, { ...common, "Content-Type": "application/json", "Content-Length": body.length }); res.end(body); return;
     }
