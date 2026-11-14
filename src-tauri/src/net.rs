@@ -1379,8 +1379,13 @@ pub async fn edge(
     }
 }
 
-/// 拉原始字节（图片 / m3u8 / 分片）。
+/// 拉原始字节（图片 / m3u8 / 分片），沿用应用主站 Referer。
 pub async fn fetch_bytes(url: &str) -> Result<(Option<String>, Vec<u8>), String> {
+    fetch_bytes_with_referer(url, None).await
+}
+
+/// 拉原始字节；第三方图片可指定经调用方校验过的来源 Referer。
+pub async fn fetch_bytes_with_referer(url: &str, referrer: Option<&str>) -> Result<(Option<String>, Vec<u8>), String> {
     static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let request = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let resource = crate::playback_log::resource_id(url);
@@ -1390,7 +1395,7 @@ pub async fn fetch_bytes(url: &str) -> Result<(Option<String>, Vec<u8>), String>
     let host = target.as_ref().and_then(|target| target.host_str()).unwrap_or("").to_string();
     let public_dns = AtomicBool::new(MEDIA_DNS_ROUTES.lock().ok()
         .is_some_and(|routes| routes.prefers_public(&host, Instant::now())));
-    let referer = format!("{}/", base());
+    let referer = referrer.map(str::to_owned).unwrap_or_else(|| format!("{}/", base()));
     with_retry(true, || {
         attempt += 1;
         let attempt = attempt;

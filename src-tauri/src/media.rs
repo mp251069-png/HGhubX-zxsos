@@ -109,11 +109,20 @@ fn image_kind(buf: &[u8]) -> Option<&'static str> {
 
 /// 取封面：命中缓存直接返回，否则下载并按需解密。
 pub async fn load_image(url: &str) -> Result<(String, Arc<Vec<u8>>), String> {
-    if let Some(hit) = IMG_CACHE.lock().unwrap().get(url).cloned() {
+    load_image_with_referer(url, None).await
+}
+
+/// TVBox 来源可能使用图床防盗链；仅使用调用方传入的来源 origin，不带路径或查询令牌。
+async fn load_image_with_referer(
+    url: &str,
+    referer: Option<&str>,
+) -> Result<(String, Arc<Vec<u8>>), String> {
+    let cache_key = format!("{url}\0{}", referer.unwrap_or(""));
+    if let Some(hit) = IMG_CACHE.lock().unwrap().get(&cache_key).cloned() {
         let kind = image_kind(&hit).unwrap_or("image/jpeg");
         return Ok((kind.to_string(), hit));
     }
-    let (_, bytes) = fetch_bytes(url).await?;
+    let (_, bytes) = crate::net::fetch_bytes_with_referer(url, referer).await?;
     let plain = if image_kind(&bytes).is_some() {
         bytes
     } else {
@@ -122,8 +131,26 @@ pub async fn load_image(url: &str) -> Result<(String, Arc<Vec<u8>>), String> {
     };
     let kind = image_kind(&plain).unwrap_or("image/jpeg").to_string();
     let arc = Arc::new(plain);
-    cache_put(&IMG_CACHE, url.to_string(), arc.clone(), IMG_CACHE_MAX);
+    cache_put(&IMG_CACHE, cache_key, arc.clone(), IMG_CACHE_MAX);
     Ok((kind, arc))
+}
+
+fn normalized_image_referer(raw: &str) -> Option<String> {
+    let url = url::Url::parse(raw).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return None;
+    }
+    let origin = url.origin().ascii_serialization();
+    (origin != "null").then(|| format!("{}/", origin.trim_end_matches('/')))
+}
+
+fn query_value(query: &str, key: &str) -> Option<String> {
+    query
+        .split('&')
+        .find_map(|part| part.strip_prefix(&format!("{key}=")).map(dec))
 }
 
 /* ───────────────────────── HLS ───────────────────────── */
@@ -433,11 +460,8 @@ pub async fn handle(
     origin: &str,
     range: Option<&str>,
 ) -> Response<Vec<u8>> {
-    let target = query
-        .split('&')
-        .find_map(|kv| kv.strip_prefix("u="))
-        .map(dec)
-        .unwrap_or_default();
+    let target = query_value(query, "u").unwrap_or_default();
+    let image_referer = query_value(query, "r").and_then(|value| normalized_image_referer(&value));
 
     if target.is_empty() {
         return respond(400, "text/plain", b"missing u".to_vec(), "no-store");
@@ -456,7 +480,7 @@ pub async fn handle(
     );
     let response = apply_byte_range(
         match path {
-            "/img" => match load_image(&target).await {
+            "/img" => match load_image_with_referer(&target, image_referer.as_deref()).await {
                 Ok((kind, bytes)) => {
                     respond(200, &kind, bytes.as_ref().clone(), "public, max-age=86400")
                 }
@@ -745,6 +769,26 @@ mod tests {
         let stripped = strip_padding(decrypted);
         assert_eq!(stripped, plain);
         assert_eq!(image_kind(&stripped), Some("image/jpeg"));
+    }
+
+    #[test]
+    fn image_referer_is_reduced_to_a_credential_free_origin() {
+        assert_eq!(
+            normalized_image_referer("https://tv.example/api.php/vod?token=secret"),
+            Some("https://tv.example/".into())
+        );
+        assert_eq!(
+            normalized_image_referer("http://user:pass@tv.example/vod"),
+            None
+        );
+        assert_eq!(normalized_image_referer("javascript:alert(1)"), None);
+        assert_eq!(
+            query_value(
+                "u=https%3A%2F%2Fcdn.example%2Fp.jpg&r=https%3A%2F%2Ftv.example%2F",
+                "r"
+            ),
+            Some("https://tv.example/".into())
+        );
     }
 
     /// 联网测试：默认跳过。封面地址带时效签名，不能硬编码进仓库，
