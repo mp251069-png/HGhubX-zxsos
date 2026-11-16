@@ -93,7 +93,7 @@ export default function Profile({ wide }: { wide: boolean }) {
           </CollectionLinks>
         )}
 
-        <CollectionLinks className="ios-profile-links mt-4">
+        <CollectionLinks className="ios-tvbox-source-links mt-4">
           <CollectionLink className="col-span-2" icon={<IGlobe size={18} />} title="TVBox 源播放"
             subtitle="XML / JSON / Remote 源；复用 HGhubX 播放器"
             onClick={() => push({ kind: "tvbox_sources" })} />
