@@ -29,6 +29,13 @@ Windows / macOS / Linux / Android / iOS · iOS 圆角与玻璃材质 · 沉浸�
 > 包括打包出售、接入付费/会员/广告变现、作为收费产品或服务的一部分分发。
 > 个人学习、研究、自用与非营利使用不受限制，详见 [LICENSE](LICENSE)。
 
+## TVBox XML / JSON / Remote 源（实验功能）
+
+- 在「我的 → TVBox 源播放」导入配置 JSON/JSONC 或 URL，也可手动添加源；支持 XML `type=0`、JSON `type=1` 与 Remote `type=4`，源库单独保存在本机。
+- Remote 播放会调用源的 `play` / `flag` 接口；只接受直接 HTTP(S) 媒体 URL，不会执行 Spider/JAR 或网页脚本。旧的「影视 → TVBox 源」入口保留，已有受限 JavaScript Spider 能力仍在那里使用。
+- 播放复用 HGhubX 的 `VideoSurface`、HLS/媒体代理和 iOS Face ID 应用锁，不替换播放器。配置和播放请求都经应用现有网络/DNS 安全策略；接口响应限制 8 MiB、超时 25 秒。
+- 内置解析只做静态直链提取；依赖 DRM、自定义请求头、非标准网页播放器或私有鉴权的源不保证可播放。参考格式代码的 MIT 许可见 [`ThirdPartyNotices/TVBox-Swift-MIT.txt`](ThirdPartyNotices/TVBox-Swift-MIT.txt)；本仓库仍受 PolyForm Noncommercial 许可约束。
+
 ## 仿冒提醒
 
 > 🚫 **已发现的恶意修改版**：[`hichuv 仓库`](https://github.com/hichuv 仓库)
