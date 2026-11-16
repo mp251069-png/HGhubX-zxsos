@@ -47,7 +47,7 @@ async function serveMedia(dir) {
     res.on("close", () => jsonl(join(output, "media-server.jsonl"), { request, route: url.pathname, fragment, status, bytes, elapsed_ms: Math.round(performance.now() - started), aborted: !res.writableFinished }));
     try {
       let body, kind;
-      if (url.pathname === "/hls") {
+      if (url.pathname === "/hls" || url.pathname === "/hls/playlist.m3u8") {
         body = Buffer.from(manifest.split("\n").map(line => !line || line.startsWith("#") ? line :
           `http://hg.localhost/seg?u=${encodeURIComponent(`https://media.fixture.invalid/${line.trim()}`)}`).join("\n"));
         kind = "application/vnd.apple.mpegurl";
