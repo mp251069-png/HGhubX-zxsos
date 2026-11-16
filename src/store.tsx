@@ -38,7 +38,8 @@ export type Page =
   | { kind: "tags"; key: string }
   | { kind: "tag"; key: string; tag: string; name: string }
   | { kind: "following"; key: string }
-  | { kind: "user"; key: string; id: number; name?: string };
+  | { kind: "user"; key: string; id: number; name?: string }
+  | { kind: "tvbox_sources"; key: string };
 
 export type PageInput =
   | { kind: "feed"; videoIds: number[]; index: number; title: string; source?: string; feedKind?: "video" | "post"; startEp?: number; startTime?: number; tvboxSource?: TVBoxSource; tvboxItems?: TVBoxVideo[] }
@@ -52,7 +53,8 @@ export type PageInput =
   | { kind: "tags" }
   | { kind: "tag"; tag: string; name: string }
   | { kind: "following" }
-  | { kind: "user"; id: number; name?: string };
+  | { kind: "user"; id: number; name?: string }
+  | { kind: "tvbox_sources" };
 
 export type Toast = {
   id: number;
