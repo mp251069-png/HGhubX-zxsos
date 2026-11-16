@@ -7,7 +7,7 @@ import { useStore } from "../store";
 import { Avatar, Empty } from "../components/ui";
 import { MediaCard } from "../components/cards";
 import { CollectionLink, CollectionLinks } from "../components/CollectionLink";
-import { IChevR, IClock, IHeart, ILogout, ISettings, IStar, IUser, IUserF } from "../icons";
+import { IChevR, IClock, IGlobe, IHeart, ILogout, ISettings, IStar, IUser, IUserF } from "../icons";
 
 /* 我的：结构固定（资料卡 + 我的收藏 / 观看历史）。
    收藏与观看记录都存在本地，所以未登录也照常展示；未登录时资料卡本身就是登录入口。 */
@@ -92,6 +92,12 @@ export default function Profile({ wide }: { wide: boolean }) {
               onClick={() => push({ kind: "user", id: user.id, name: user.nickname })} />
           </CollectionLinks>
         )}
+
+        <CollectionLinks className="ios-profile-links mt-4">
+          <CollectionLink className="col-span-2" icon={<IGlobe size={18} />} title="TVBox 源播放"
+            subtitle="XML / JSON / Remote 源；复用 HGhubX 播放器"
+            onClick={() => push({ kind: "tvbox_sources" })} />
+        </CollectionLinks>
 
         {/* 我的内容 */}
         <SegmentedControl className="mt-4" aria-label="我的内容" activeIndex={tab === "fav" ? 0 : 1}>
