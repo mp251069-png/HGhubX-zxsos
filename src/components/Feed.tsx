@@ -15,7 +15,7 @@ import { setBackHandler } from "../back";
 import { copyText } from "../clipboard";
 import { tracePlayback } from "../playbackDiagnostics";
 import { createPlaybackClock } from "../playbackClock";
-import { preferredTVBoxLine, tvboxDetail, tvboxDetailModel, tvboxMediaUrl, tvboxPlaybackSource, tvboxResolveMedia, tvboxVideoCard, type TVBoxSource, type TVBoxVideo, type TVBoxVod } from "../tvbox";
+import { addTVBoxHistory, isTVBoxFavorite, preferredTVBoxLine, toggleTVBoxFavorite, tvboxDetail, tvboxDetailModel, tvboxMediaUrl, tvboxPlaybackSource, tvboxResolveMedia, tvboxVideoCard, type TVBoxSource, type TVBoxVideo, type TVBoxVod } from "../tvbox";
 import {
   IBack, IBoltF, IChevR, IChevronDown, IChevronUp, IClose, ICommentF, ICompress, IExpand, IFileText, IHeart, IHeartF,
   ILink, IList, ILockF, IPauseF, IPlayF, ISearch, IStar, IStarF, IVertSwap, IVol, IVolMute,
@@ -58,6 +58,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   const [playUrls, setPlayUrls] = useState<Record<string, string>>({});
   const [hevcUrls, setHevcUrls] = useState<Record<string, string>>({});
   const [proxyRetry, setProxyRetry] = useState(0);
+  const [tvboxFavorite, setTVBoxFavorite] = useState(false);
   const [cards, setCards] = useState<Record<number, VideoCard>>({});
   const [posts, setPosts] = useState<Record<number, Post>>({});
   const [related, setRelated] = useState<VideoCard[]>([]);
@@ -164,6 +165,18 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   const episodes = detail?.episodes || [];
   const post = posts[curId];
 
+  useEffect(() => {
+    setTVBoxFavorite(tvboxSource && tvboxItem ? isTVBoxFavorite(tvboxSource.id, tvboxItem.id) : false);
+  }, [tvboxSource?.id, tvboxItem?.id]);
+
+  const saveHistory = (t?: number, dur?: number) => {
+    if (tvboxSource) {
+      if (tvboxItem) addTVBoxHistory(tvboxSource, tvboxItem, curEp, t, dur);
+      return;
+    }
+    addHistory(curId, curEp, t, dur);
+  };
+
   /* 观看进度：onTime 里每 5 秒落一次；退出播放页时再用 liveRef 兜一次 */
   const onTimeTick = (t: number) => {
     liveRef.current = { id: curId, ep: curEp, dur: duration, t };
@@ -172,7 +185,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     const now = Date.now();
     if (duration > 0 && now - lastSaveRef.current > 5000) {
       lastSaveRef.current = now;
-      addHistory(curId, curEp, t, duration);
+      saveHistory(t, duration);
     }
   };
 
@@ -381,12 +394,12 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
         const requestKey = playKey;
         const episode = video.playGroups[tvboxLine]?.episodes[curEp - 1];
         tvboxResolveMedia(tvboxSource, video.playGroups[tvboxLine]?.name || "", episode?.url || "")
-          .then(streamUrl => { if (alive && requestKey === playKey) { setPlayUrls(current => ({ ...current, [requestKey]: streamUrl })); addHistory(curId, curEp); } })
+          .then(streamUrl => { if (alive && requestKey === playKey) { setPlayUrls(current => ({ ...current, [requestKey]: streamUrl })); saveHistory(); } })
           .catch(error => { if (alive && requestKey === playKey) setErr((error as Error).message || "TVBox 播放解析失败"); });
       } else try {
         const streamUrl = tvboxMediaUrl(video, curEp, tvboxLine);
         setPlayUrls(current => ({ ...current, [playKey]: streamUrl }));
-        addHistory(curId, curEp);
+        saveHistory();
       } catch (error) {
         setErr((error as Error).message || "TVBox 播放地址不可用");
       }
@@ -417,7 +430,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
         if (!streamUrl) throw new Error("暂无播放地址");
         setPlayUrls((m) => ({ ...m, [playKey]: streamUrl }));
         if (hevcStream) setHevcUrls((m) => ({ ...m, [playKey]: hevcStream }));
-        addHistory(curId, curEp);
+        saveHistory();
       })
       .catch((e) => { if (alive) setErr((e as Error).message || "取播放地址失败"); });
     return () => { alive = false; };
@@ -464,9 +477,15 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   /* 离开播放页时把最后位置落盘 */
   useEffect(() => () => {
     const s = liveRef.current;
-    if (s.id && s.dur) addHistory(s.id, s.ep, s.t, s.dur);
+    if (!s.id || !s.dur) return;
+    if (tvboxSource) {
+      const item = tvboxItems?.find((video) => video.localId === s.id);
+      if (item) addTVBoxHistory(tvboxSource, item, s.ep, s.t, s.dur);
+      return;
+    }
+    addHistory(s.id, s.ep, s.t, s.dur);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tvboxSource?.id, tvboxItems]);
 
   /* 键盘 */
   useEffect(() => {
@@ -885,6 +904,13 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
 
   const onFav = () => {
     if (!curId) return;
+    if (tvboxSource) {
+      if (!tvboxItem) return;
+      const on = toggleTVBoxFavorite(tvboxSource, tvboxItem);
+      setTVBoxFavorite(on);
+      toast(on ? "已收藏" : "已取消收藏", on ? "star" : "info");
+      return;
+    }
     const on = toggleFavLocal(curId);
     toast(on ? "已收藏" : "已取消收藏", on ? "star" : "info");
     if (!tvboxSource && requireLogin()) { if (kind === "post") api.postCollect(curId, on).catch(() => {}); else api.collect(curId, on).catch(() => {}); }
@@ -1081,8 +1107,8 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
                       <span className="text-[12px] hg-ov-shadow" style={{ color: preferHevc ? "#fff" : undefined }}>{preferHevc ? "高清" : "标清"}</span>
                     </Button>
                   )}
-                  <Button onClick={onFav} className="flex flex-col items-center gap-1 pressable" aria-pressed={isFav(curId)} aria-label="收藏">
-                    {isFav(curId) ? <IStarF size={27} className="hg-gold" /> : <IStar size={27} className="hg-ink hg-ov-shadow" />}
+                  <Button onClick={onFav} className="flex flex-col items-center gap-1 pressable" aria-pressed={tvboxSource ? tvboxFavorite : isFav(curId)} aria-label="收藏">
+                    {(tvboxSource ? tvboxFavorite : isFav(curId)) ? <IStarF size={27} className="hg-gold" /> : <IStar size={27} className="hg-ink hg-ov-shadow" />}
                     <span className="text-[12px] hg-ink-2 hg-ov-shadow">收藏</span>
                   </Button>
                   {!tvboxSource && <Button onClick={() => setPanel("comments")} className="flex flex-col items-center gap-1 pressable" aria-label="评论">
@@ -1127,8 +1153,8 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
                       <span className="text-[12px] text-white/90 tabular-nums">{fmt(meta.comment)}</span>
                     </Button>}
 
-                    {!tvboxSource && <Button onClick={onFav} aria-label="收藏" className="flex flex-col items-center gap-1 pressable" aria-pressed={isFav(curId)}>
-                      {isFav(curId) ? <IStarF size={27} className="hg-gold" /> : <IStar size={27} className="hg-ink hg-ov-shadow" />}
+                    {(!tvboxSource || tvboxItem) && <Button onClick={onFav} aria-label="收藏" className="flex flex-col items-center gap-1 pressable" aria-pressed={tvboxSource ? tvboxFavorite : isFav(curId)}>
+                      {(tvboxSource ? tvboxFavorite : isFav(curId)) ? <IStarF size={27} className="hg-gold" /> : <IStar size={27} className="hg-ink hg-ov-shadow" />}
                       <span className="text-[12px] text-white/90 tabular-nums">{fmt(meta.collect)}</span>
                     </Button>}
 
