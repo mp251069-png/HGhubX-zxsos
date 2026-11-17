@@ -209,7 +209,7 @@ try {
   });
   await page.getByRole("group", { name: "影视内容来源" }).getByRole("button", { name: "TVBox 源", exact: true }).click();
   await page.getByText("Fixture 影视", { exact: true }).waitFor();
-  await page.getByLabel("TVBox 数据源").selectOption("fixture-b");
+  await page.getByLabel("TVBox 数据源", { exact: true }).selectOption("fixture-b");
   await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).host === "tv-b.fixture.invalid"));
   await page.getByRole("button", { name: "电影", exact: true }).click();
   await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).searchParams.get("t") === "1"));
