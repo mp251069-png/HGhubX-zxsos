@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Form, Input, Surface } from "../components/ios/controls";
 import { Loader } from "../components/ios/effects";
 import { Empty } from "../components/ui";
@@ -20,6 +20,8 @@ import {
 } from "../tvbox";
 import type { VideoCard } from "../types";
 
+type TVBoxRanking = "source" | "hot" | "score";
+
 export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active: boolean; wide: boolean; onBrowseModeChange: (mode: BrowseMode) => void }) {
   const { push } = useStore();
   const [sources, setSources] = useState<TVBoxSource[]>(loadTVBoxSources);
@@ -27,6 +29,7 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [category, setCategory] = useState("");
+  const [ranking, setRanking] = useState<TVBoxRanking>("source");
   const [categories, setCategories] = useState<TVBoxCategory[]>([]);
   const [videos, setVideos] = useState<TVBoxVideo[]>([]);
   const [cards, setCards] = useState<VideoCard[]>([]);
@@ -105,6 +108,13 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
     }
   }, [source, category]);
 
+  const visibleCards = useMemo(() => {
+    if (ranking === "source") return cards;
+    return [...cards].sort((a, b) => ranking === "hot"
+      ? b.hot - a.hot || b.score - a.score
+      : b.score - a.score || b.hot - a.hot);
+  }, [cards, ranking]);
+
   useEffect(() => {
     if (!active || !source) return;
     void loadPage(submitted, 1);
@@ -167,21 +177,28 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
               <Button type="submit" aria-label="搜索" className="h-8 rounded-(--r-ctl) bg-primary px-3 text-[12px] font-semibold text-on-primary">搜索</Button>
             </Form>
           </div>
-          {!!categories.length && (
-            <div className="shrink-0 flex gap-2 overflow-x-auto px-4 pb-3 no-bar" role="group" aria-label="TVBox 影视分类">
+          <div className="shrink-0 flex items-center gap-2 px-4 pb-3">
+            <div className="min-w-0 flex-1 flex gap-2 overflow-x-auto no-bar" role="group" aria-label="TVBox 影视分类">
               <Button aria-pressed={!category} onClick={() => chooseCategory("")}
-                className={`h-8 shrink-0 rounded-(--r-ctl) px-3 text-[12px] pressable ${!category ? "bg-primary text-on-primary" : "bg-s2 text-on/80"}`}>全部</Button>
+                className="ios-filter-pill shrink-0">全部分类</Button>
               {categories.map(item => (
                 <Button key={item.id} aria-pressed={category === item.id} onClick={() => chooseCategory(item.id)}
-                  className={`h-8 shrink-0 rounded-(--r-ctl) px-3 text-[12px] pressable ${category === item.id ? "bg-primary text-on-primary" : "bg-s2 text-on/80"}`}>{item.name}</Button>
+                  className="ios-filter-pill shrink-0">{item.name}</Button>
               ))}
             </div>
-          )}
+            <select aria-label="TVBox 榜单" value={ranking} onChange={event => setRanking(event.target.value as TVBoxRanking)}
+              title="按 TVBox 源返回的播放量排序；源未提供播放量时以评分作为次级排序"
+              className="h-8 w-[116px] shrink-0 rounded-(--r-ctl) bg-s2 px-2 text-[12px] text-on outline-none">
+              <option value="source">源推荐</option>
+              <option value="hot">热度榜（无热度则看评分）</option>
+              <option value="score">评分榜</option>
+            </select>
+          </div>
           <div className="flex-1 scroll-y px-4 pb-24">
             {cards.length > 0 ? (
               <>
                 <p className="mb-2 text-[12px] text-mut">{source.name}{submitted ? ` · 搜索“${submitted}”` : " · 影视目录"} · 点击封面查看详情</p>
-                <Masonry videos={cards} wide={wide} onOpen={card => {
+                <Masonry videos={visibleCards} wide={wide} onOpen={card => {
                   const index = videos.findIndex(video => video.localId === card.id);
                   if (index >= 0) push({ kind: "feed", videoIds: videos.map(video => video.localId), index,
                     title: `${source.name} · ${card.title}`, tvboxSource: source, tvboxItems: videos });
