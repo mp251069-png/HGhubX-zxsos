@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const home = await readFile(join(root, "src/pages/Home.tsx"), "utf8");
 const tvboxPage = await readFile(join(root, "src/pages/TVBox.tsx"), "utf8");
+const moviesChrome = await readFile(join(root, "src/components/MoviesChrome.tsx"), "utf8");
 const browse = await readFile(join(root, "src/pages/Browse.tsx"), "utf8");
 const modeModule = await readFile(join(root, "src/browseMode.ts"), "utf8");
 
@@ -30,8 +31,10 @@ assert.doesNotMatch(tvboxPage, /aria-label="TVBox 影视分类"/,
   "TVBox page must not restore the removed top category row");
 includes(tvboxPage, /<section key=\{item\.id\} aria-label=\{item\.name\}/,
   "TVBox shelves must preserve source category IDs and names");
-includes(tvboxPage, /onClick=\{\(\) => chooseCategory\(item\.id\)\} aria-label=\{`查看全部\$\{item\.name\}`\}/,
-  "View all must open the selected source category by its original ID");
+includes(tvboxPage, /<MoviesShelfHeading title=\{item\.name\}[\s\S]*?actionLabel="查看全部" actionAriaLabel=\{`查看全部\$\{item\.name\}`\}[\s\S]*?onAction=\{\(\) => chooseCategory\(item\.id\)\}/,
+  "View all must pass the source category ID and accessible label to the shared shelf heading");
+includes(moviesChrome, /aria-label=\{actionAriaLabel \?\? `\$\{actionLabel\}\$\{title\}`\}/,
+  "Shared shelf actions must expose their supplied accessible name");
 includes(tvboxPage, /<TVBoxVideoRail items=\{shelf\.items\}/,
   "Source categories must display horizontal video shelves");
 includes(tvboxPage, /tvboxList\(currentSource, nextPage, category\)/,
