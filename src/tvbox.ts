@@ -1,10 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { cover, directMedia, playlist } from "./api";
 import type { Detail, Episode, VideoCard } from "./types";
+import { fetchLiveM3U, importLiveSourceFromText, loadLiveSources, parseM3U, safeLiveHttpUrl, type LiveSource } from "./live";
 
 const SOURCES_KEY = "hghubx_tvbox_sources_v1";
 const ACTIVE_KEY = "hghubx_tvbox_active_v1";
+const FAVORITES_KEY = "hghubx_tvbox_favorites_v1";
+const HISTORY_KEY = "hghubx_tvbox_history_v1";
 export const TVBOX_SOURCE_EVENT = "hghubx:tvbox-source-changed";
+export const TVBOX_LIBRARY_EVENT = "hghubx:tvbox-library-changed";
 
 export type TVBoxSourceKind = "xml" | "remote" | "js";
 // A missing kind is the legacy standard JSON API representation.
@@ -26,10 +30,19 @@ export type TVBoxVod = {
   actor: string;
   director: string;
   score: number;
+  hot?: number;
   status: string;
   playGroups: TVBoxPlayGroup[];
 };
 export type TVBoxVideo = TVBoxVod & { localId: number };
+export type TVBoxLibraryEntry = {
+  source: TVBoxSource;
+  video: TVBoxVideo;
+  ep: number;
+  t: number;
+  dur: number;
+  updatedAt: number;
+};
 export type TVBoxPage = {
   items: TVBoxVideo[];
   categories: TVBoxCategory[];
@@ -256,6 +269,7 @@ function normalizeVod(value: unknown, source: TVBoxSource): TVBoxVod | null {
     return { name: playFrom[index]?.trim() || `线路 ${index + 1}`, episodes };
   }).filter(group => group.episodes.length > 0);
   const rawScore = text(item.vod_score).replace(/[^\d.]/g, "");
+  const hot = number(item.vod_hits ?? item.vod_hits_month ?? item.vod_play_count ?? item.hits ?? item.play_count);
   return {
     id,
     title,
@@ -269,6 +283,7 @@ function normalizeVod(value: unknown, source: TVBoxSource): TVBoxVod | null {
     actor: text(item.vod_actor),
     director: text(item.vod_director),
     score: number(rawScore),
+    hot,
     status: text(item.vod_state ?? item.vod_remarks ?? item.vod_serial),
     playGroups,
   };
@@ -290,7 +305,7 @@ export function tvboxVideoCard(video: TVBoxVideo | TVBoxVod, source: TVBoxSource
     episode_count: episodeCount,
     total_episodes: episodeCount,
     duration: video.remarks,
-    hot: 0,
+    hot: video.hot ?? 0,
     like_count: 0,
     collect_count: 0,
     comment_count: 0,
@@ -700,6 +715,107 @@ export function removeTVBoxSource(id: string): void {
   else window.dispatchEvent(new CustomEvent(TVBOX_SOURCE_EVENT, { detail: activeTVBoxSource() }));
 }
 
+function tvboxLibraryKey(entry: Pick<TVBoxLibraryEntry, "source" | "video">): string {
+  return `${entry.source.id}\u0000${entry.video.id}`;
+}
+
+function normalizeLibraryEntry(value: unknown): TVBoxLibraryEntry | null {
+  const item = record(value);
+  const rawSource = record(item?.source);
+  const rawVideo = record(item?.video);
+  if (!item || !rawSource || !rawVideo) return null;
+  const id = text(rawSource.id);
+  const name = text(rawSource.name);
+  const rawSourceUrl = text(rawSource.url);
+  const videoId = text(rawVideo.id);
+  const title = text(rawVideo.title);
+  if (!id || !name || !rawSourceUrl || !videoId || !title) return null;
+  try {
+    const kind = rawSource.kind === "js" || rawSource.kind === "xml" || rawSource.kind === "remote" ? rawSource.kind : undefined;
+    const url = kind === "js" ? normalizeJsEntry(rawSourceUrl) : normalizeSourceUrl(rawSourceUrl);
+    const source: TVBoxSource = { id, name, url,
+      ...(kind ? { kind, ...(rawSource.ext === undefined ? {} : { ext: rawSource.ext }),
+        ...(kind === "remote" ? { quickSearch: rawSource.quickSearch === true } : {}) } : {}) };
+    const localIdRaw = number(rawVideo.localId, 0);
+    const video: TVBoxVideo = {
+      id: videoId,
+      localId: Number.isSafeInteger(localIdRaw) && localIdRaw > 0 ? localIdRaw : stableLocalId(id, videoId),
+      title,
+      cover: safeLiveHttpUrl(text(rawVideo.cover), url) || "",
+      remarks: text(rawVideo.remarks),
+      description: text(rawVideo.description),
+      year: text(rawVideo.year),
+      area: text(rawVideo.area),
+      language: text(rawVideo.language),
+      type: text(rawVideo.type),
+      actor: text(rawVideo.actor),
+      director: text(rawVideo.director),
+      score: number(rawVideo.score),
+      hot: number(rawVideo.hot),
+      status: text(rawVideo.status),
+      // Playback URLs are reloaded from the source when the saved item is opened.
+      playGroups: [],
+    };
+    return { source, video, ep: Math.max(0, Math.floor(number(item.ep, 0))),
+      t: Math.max(0, number(item.t)), dur: Math.max(0, number(item.dur)),
+      updatedAt: Math.max(0, number(item.updatedAt, Date.now())) };
+  } catch { return null; }
+}
+
+function readTVBoxLibrary(key: string): TVBoxLibraryEntry[] {
+  if (typeof localStorage === "undefined") return [];
+  try {
+    const values: unknown = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(values) ? values.flatMap(value => {
+      const entry = normalizeLibraryEntry(value);
+      return entry ? [entry] : [];
+    }) : [];
+  } catch { return []; }
+}
+
+function writeTVBoxLibrary(key: string, entries: TVBoxLibraryEntry[]): void {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(key, JSON.stringify(entries));
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(TVBOX_LIBRARY_EVENT));
+}
+
+function makeTVBoxLibraryEntry(source: TVBoxSource, video: TVBoxVideo, ep = 0, t = 0, dur = 0): TVBoxLibraryEntry {
+  return { source: { ...source }, video: { ...video, playGroups: [] }, ep, t, dur, updatedAt: Date.now() };
+}
+
+export function loadTVBoxFavorites(): TVBoxLibraryEntry[] {
+  return readTVBoxLibrary(FAVORITES_KEY);
+}
+
+export function loadTVBoxHistory(): TVBoxLibraryEntry[] {
+  return readTVBoxLibrary(HISTORY_KEY);
+}
+
+export function isTVBoxFavorite(sourceId: string, videoId: string): boolean {
+  return loadTVBoxFavorites().some(entry => entry.source.id === sourceId && entry.video.id === videoId);
+}
+
+export function toggleTVBoxFavorite(source: TVBoxSource, video: TVBoxVideo): boolean {
+  const current = loadTVBoxFavorites();
+  const exists = current.some(entry => entry.source.id === source.id && entry.video.id === video.id);
+  const next = exists
+    ? current.filter(entry => entry.source.id !== source.id || entry.video.id !== video.id)
+    : [makeTVBoxLibraryEntry(source, video), ...current].slice(0, 500);
+  writeTVBoxLibrary(FAVORITES_KEY, next);
+  return !exists;
+}
+
+export function addTVBoxHistory(source: TVBoxSource, video: TVBoxVideo, ep: number, t = 0, dur = 0): void {
+  const entry = makeTVBoxLibraryEntry(source, video, ep, t, dur);
+  const key = tvboxLibraryKey(entry);
+  const next = [entry, ...loadTVBoxHistory().filter(item => tvboxLibraryKey(item) !== key)].slice(0, 200);
+  writeTVBoxLibrary(HISTORY_KEY, next);
+}
+
+export function clearTVBoxHistory(): void {
+  writeTVBoxLibrary(HISTORY_KEY, []);
+}
+
 function flagEnabled(value: unknown): boolean {
   const wrapped = record(value);
   const raw = wrapped && "value" in wrapped ? wrapped.value : value;
@@ -774,21 +890,125 @@ export function parseTVBoxConfig(value: unknown, baseUrl = ""): { sites: Omit<TV
   };
 }
 
+export type TVBoxLiveEntry = { name: string; url: string };
+
+/** Read only live playlist links; type/ua are deliberately not executed or forwarded as code. */
+export function parseTVBoxLiveEntries(value: unknown, baseUrl: string): { entries: TVBoxLiveEntry[]; skipped: number; duplicates: number } {
+  const root = record(value);
+  const data = record(root?.data);
+  const rawLives = [
+    ...(Array.isArray(root?.lives) ? root.lives : []),
+    ...(Array.isArray(data?.lives) ? data.lives : []),
+  ];
+  const boundedLives = rawLives.slice(0, 50);
+  const seen = new Set<string>();
+  let skipped = rawLives.length - boundedLives.length;
+  let duplicates = 0;
+  const entries = boundedLives.flatMap((raw): TVBoxLiveEntry[] => {
+    const item = record(raw);
+    const rawUrl = item && text(item.url);
+    const url = rawUrl ? safeLiveHttpUrl(rawUrl, baseUrl) : "";
+    if (!url) {
+      skipped += 1;
+      return [];
+    }
+    if (seen.has(url)) {
+      duplicates += 1;
+      return [];
+    }
+    seen.add(url);
+    return [{ name: text(item?.name) || text(item?.title) || "TVBox 直播源", url }];
+  });
+  return { entries, skipped, duplicates };
+}
+
+function tvboxPlainLiveTextToM3U(rawText: string, baseUrl: string): string {
+  const lines = rawText.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").split("\n");
+  const output = ["#EXTM3U"];
+  let group = "未分组";
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const comma = line.indexOf(",");
+    if (comma < 1) continue;
+    const name = line.slice(0, comma).trim().replace(/[\r\n]/g, "").slice(0, 160);
+    const value = line.slice(comma + 1).trim();
+    if (!name || !value) continue;
+    if (/#genre#/i.test(value)) {
+      group = name;
+      continue;
+    }
+    const safeGroup = group.replace(/[\r\n"]/g, "").slice(0, 120) || "未分组";
+    for (const candidate of value.split("#")) {
+      const url = safeLiveHttpUrl(candidate.trim(), baseUrl);
+      if (!url) continue;
+      output.push(`#EXTINF:-1 group-title="${safeGroup}",${name}`, url);
+    }
+  }
+  return output.join("\n");
+}
+
+async function importTVBoxLiveSources(value: unknown, baseUrl: string): Promise<{
+  sources: LiveSource[];
+  imported: number;
+  failed: number;
+  skipped: number;
+}> {
+  const parsed = parseTVBoxLiveEntries(value, baseUrl);
+  const existingUrls = new Set(loadLiveSources().flatMap(source => source.url ? [source.url] : []));
+  const sources: LiveSource[] = [];
+  let failed = 0;
+  let skipped = parsed.skipped + parsed.duplicates;
+  for (const entry of parsed.entries) {
+    if (existingUrls.has(entry.url)) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      const { text: rawText, finalUrl } = await fetchLiveM3U(entry.url);
+      const playlistText = /#EXTINF:/i.test(rawText)
+        ? rawText
+        : tvboxPlainLiveTextToM3U(rawText, finalUrl);
+      parseM3U(playlistText, finalUrl);
+      const source = importLiveSourceFromText(playlistText, entry.name, finalUrl, entry.url, { preserveActive: true });
+      existingUrls.add(entry.url);
+      sources.push(source);
+    } catch {
+      // A bad live playlist must never make the TVBox VOD import fail; report only a count.
+      failed += 1;
+    }
+  }
+  return { sources, imported: sources.length, failed, skipped };
+}
+
 /** Import a TVBox config JSON, including XML/JSON/Remote APIs and bounded HTTP(S) JS/MJS Spiders. */
-export async function importTVBoxSources(rawUrl: string, fallbackName = ""): Promise<{ sources: TVBoxSource[]; spiderSkipped: number; repositories?: TVBoxRepository[] }> {
+export async function importTVBoxSources(rawUrl: string, fallbackName = ""): Promise<{
+  sources: TVBoxSource[];
+  spiderSkipped: number;
+  repositories?: TVBoxRepository[];
+  liveSources: LiveSource[];
+  liveImported: number;
+  liveFailed: number;
+  liveSkipped: number;
+}> {
   const url = normalizeSourceUrl(rawUrl);
   const raw = await fetchTVBoxJson(url);
+  const root = record(raw);
+  const data = record(root?.data);
+  const hasLiveEntries = [root?.lives, data?.lives].some(value => Array.isArray(value) && value.length > 0);
+  const live = await importTVBoxLiveSources(raw, url);
+  const liveResult = { liveSources: live.sources, liveImported: live.imported, liveFailed: live.failed, liveSkipped: live.skipped };
   const repositories = parseTVBoxRepositories(raw, url);
-  if (repositories.length) return { sources: [], spiderSkipped: 0, repositories };
+  if (repositories.length) return { sources: [], spiderSkipped: 0, repositories, ...liveResult };
   const config = parseTVBoxConfig(raw, url);
   const spiderSkipped = config.spiderSkipped;
   let candidates = config.sites;
-  const root = record(raw);
-  const data = record(root?.data);
   const hasSites = Array.isArray(root?.sites) || Array.isArray(data?.sites);
   if (hasSites && !candidates.length) {
+    if (hasLiveEntries) return { sources: [], spiderSkipped, ...liveResult };
     throw new Error("该配置没有可支持的 XML/JSON/Remote API 或 catvod JS 入口；JAR/Python 等未知运行器不会执行");
   }
+  if (!candidates.length && hasLiveEntries) return { sources: [], spiderSkipped, ...liveResult };
   if (!candidates.length) {
     const direct: TVBoxSource = { id: randomId(), name: fallbackName.trim() || new URL(url).host, url };
     // Verify the endpoint uses the standard JSON list contract, without requiring content to exist.
@@ -816,10 +1036,13 @@ export async function importTVBoxSources(rawUrl: string, fallbackName = ""): Pro
           ...(kind === "remote" ? { quickSearch } : {}) } : {}) }];
     } catch { return []; }
   });
-  if (!added.length) throw new Error("没有找到新的 XML/JSON/Remote API 或 HTTP(S) JS/MJS Spider 源");
+  if (!added.length) {
+    if (hasLiveEntries) return { sources: [], spiderSkipped, ...liveResult };
+    throw new Error("没有找到新的 XML/JSON/Remote API 或 HTTP(S) JS/MJS Spider 源");
+  }
   const next = [...existing, ...added];
   saveTVBoxSources(next);
   if (!activeTVBoxSource()) selectTVBoxSource(added[0].id);
   else window.dispatchEvent(new CustomEvent(TVBOX_SOURCE_EVENT, { detail: activeTVBoxSource() }));
-  return { sources: added, spiderSkipped };
+  return { sources: added, spiderSkipped, ...liveResult };
 }

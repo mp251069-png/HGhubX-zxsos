@@ -412,14 +412,15 @@ export const removeLiveSource = (id: string): LiveSource[] => {
   return next;
 };
 
-const upsertLiveSource = (entry: LiveSource): LiveSource => {
+const upsertLiveSource = (entry: LiveSource, preserveActive = false): LiveSource => {
   const current = loadLiveSources();
   const next = [
     entry,
     ...current.filter((item) => item.id !== entry.id && (!entry.url || item.url !== entry.url)),
   ];
   if (typeof localStorage !== "undefined") {
-    localStorage.setItem(LIVE_ACTIVE_KEY, entry.id);
+    const currentActive = activeLiveSource(current);
+    if (!preserveActive || !currentActive) localStorage.setItem(LIVE_ACTIVE_KEY, entry.id);
     localStorage.setItem(LIVE_SOURCES_KEY, JSON.stringify(next));
   }
   notifyLiveSources(entry);
@@ -456,6 +457,7 @@ export const importLiveSourceFromText = (
   name = "本地 M3U 直播源",
   baseUrl = "",
   sourceUrl?: string,
+  options: { preserveActive?: boolean } = {},
 ): LiveSource => {
   const safeBase = baseUrl ? safeLiveHttpUrl(baseUrl) : "";
   const parsed = parseM3U(rawText, safeBase);
@@ -471,17 +473,21 @@ export const importLiveSourceFromText = (
     updatedAt: Date.now(),
     skippedUnsafe: parsed.skippedUnsafe,
   };
-  return upsertLiveSource(source);
+  return upsertLiveSource(source, options.preserveActive === true);
 };
 
-export const importLiveSourceFromUrl = async (rawUrl: string, customName = ""): Promise<LiveSource> => {
+export const importLiveSourceFromUrl = async (
+  rawUrl: string,
+  customName = "",
+  options: { preserveActive?: boolean } = {},
+): Promise<LiveSource> => {
   const safeUrl = safeLiveHttpUrl(rawUrl);
   if (!safeUrl) {
     throw new Error("直播订阅地址必须是有效的 HTTP 或 HTTPS 链接（不支持私有协议或内嵌账号密码）");
   }
   const { text, finalUrl } = await fetchLiveM3U(safeUrl);
   const name = customName.trim() || deriveSourceNameFromUrl(safeUrl);
-  return importLiveSourceFromText(text, name, finalUrl, safeUrl);
+  return importLiveSourceFromText(text, name, finalUrl, safeUrl, options);
 };
 
 export const refreshLiveSource = async (source: LiveSource): Promise<LiveSource> => {
