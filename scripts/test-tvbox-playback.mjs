@@ -1,4 +1,4 @@
-// Local-only end-to-end regression: standard TVBox JSON/API -> Feed -> VideoSurface -> MP4 /seg.
+// Local-only end-to-end regression: TVBox JSON/XML/Remote and JS -> Feed -> VideoSurface -> MP4 /seg.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -50,6 +50,25 @@ async function serveFixture() {
       const body = Buffer.from(JSON.stringify(payload));
       res.writeHead(200, { ...common, "Content-Type": "application/json", "Content-Length": body.length }); res.end(body); return;
     }
+    if (url.pathname === "/xml-api.php") {
+      const xml = `<?xml version="1.0"?><rss><class><ty id="1"><![CDATA[电影]]></ty></class><list page="1" pagecount="1" recordcount="1">
+        <video><id>xml-fixture-vod</id><name><![CDATA[本地 XML MP4 回归]]></name><pic>/poster.jpg</pic><note>全集</note>
+        <des><![CDATA[XML 类型直连回归]]></des><dl><dd flag="本地 MP4"><![CDATA[第1集$http://media.fixture.invalid/tvbox-playback-sample.mp4]]></dd></dl></video>
+      </list></rss>`;
+      const body = Buffer.from(xml);
+      res.writeHead(200, { ...common, "Content-Type": "application/xml; charset=utf-8", "Content-Length": body.length }); res.end(body); return;
+    }
+    if (url.pathname === "/remote-api.php") {
+      let payload;
+      if (url.searchParams.has("play")) payload = { url: "http://media.fixture.invalid/tvbox-playback-sample.mp4" };
+      else if (url.searchParams.has("ids")) payload = { code: 1, list: [{ vod_id: "remote-fixture-vod", vod_name: "本地 Remote MP4 回归",
+        vod_play_from: "Remote 线路", vod_play_url: "第1集$opaque-episode-1", vod_content: "Remote playContent 回归" }] };
+      else payload = { code: 1, page: 1, pagecount: 1, total: 1, class: [{ type_id: "4", type_name: "Remote 分类" }],
+        list: [{ vod_id: "remote-fixture-vod", vod_name: "本地 Remote MP4 回归", vod_pic: "/poster.jpg",
+          vod_play_from: "Remote 线路", vod_play_url: "第1集$opaque-episode-1" }] };
+      const body = Buffer.from(JSON.stringify(payload));
+      res.writeHead(200, { ...common, "Content-Type": "application/json", "Content-Length": body.length }); res.end(body); return;
+    }
     if (url.pathname === "/tvbox-playback-sample.mp4") {
       const result = await readRange(mediaFile, req.headers.range);
       const headers = { ...common, "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Content-Length": result.body.length };
@@ -84,6 +103,7 @@ try {
       if (command === "app_boot") return Promise.resolve({ user: null, logged_in: false, base: "http://fixture.invalid" });
       if (command === "debug_log" || command === "playback_log" || command === "set_text_interaction") return Promise.resolve();
       if (command === "tvbox_fetch") return fetch(String(args.url)).then(response => response.ok ? response.json() : Promise.reject(`HTTP ${response.status}`));
+      if (command === "tvbox_fetch_text") return fetch(String(args.url)).then(response => response.ok ? response.text() : Promise.reject(`HTTP ${response.status}`));
       if (command === "tvbox_spider") {
         const method = args.method;
         if (method === "home") return Promise.resolve({ class: [{ type_id: "1", type_name: "Fixture" }] });
@@ -153,6 +173,43 @@ try {
   assert.deepEqual(pageErrors, [], "Browser script errors in JS Spider case");
   report.cases.push({ name: "js-spider-opaque-id-to-mp4", status: "passed", result: jsResult, requests: jsRequests.filter(request => request.path === "/seg") });
   console.log(`PASS js-spider-opaque-id-to-mp4: ${JSON.stringify(jsResult)}`);
+
+  const xmlCaseStart = requests.length;
+  const xmlExternalStart = external.length;
+  await page.goto(`${uiOrigin}/tests/tvbox-playback.html?kind=xml&api=${encodeURIComponent(`${mediaOrigin}/xml-api.php`)}`);
+  await page.waitForFunction(() => window.tvboxPlaybackFixture?.state === "ready");
+  await page.waitForSelector("video");
+  await page.waitForFunction(() => document.querySelector("video")?.currentTime > 0.5, undefined, { timeout: 20000 });
+  const xmlResult = await page.locator("video").evaluate(video => ({ src: video.src, paused: video.paused, currentTime: video.currentTime, duration: video.duration }));
+  assert(xmlResult.src.includes("/seg?u="), `Expected XML direct /seg source, got ${xmlResult.src}`);
+  assert.equal(xmlResult.paused, false, "XML API video must actually be playing");
+  const xmlRequests = requests.slice(xmlCaseStart);
+  assert(xmlRequests.some(request => request.path === "/xml-api.php" && new URLSearchParams(request.query).get("ac") === "videolist"),
+    "XML source must request its list with ac=videolist");
+  assert(xmlRequests.some(request => request.path === "/seg" && request.range?.startsWith("bytes=")), "XML MP4 playback must make a ranged /seg request");
+  assert.deepEqual(external.slice(xmlExternalStart), [], "XML case must make no external network requests");
+  report.cases.push({ name: "tvbox-xml-to-mp4", status: "passed", result: xmlResult,
+    requests: xmlRequests.filter(request => request.path === "/seg" || request.path === "/xml-api.php") });
+  console.log(`PASS tvbox-xml-to-mp4: ${JSON.stringify(xmlResult)}`);
+
+  const remoteCaseStart = requests.length;
+  const remoteExternalStart = external.length;
+  await page.goto(`${uiOrigin}/tests/tvbox-playback.html?kind=remote&api=${encodeURIComponent(`${mediaOrigin}/remote-api.php`)}`);
+  await page.waitForFunction(() => window.tvboxPlaybackFixture?.state === "ready");
+  await page.waitForSelector("video");
+  await page.waitForFunction(() => document.querySelector("video")?.currentTime > 0.5, undefined, { timeout: 20000 });
+  const remoteResult = await page.locator("video").evaluate(video => ({ src: video.src, paused: video.paused, currentTime: video.currentTime, duration: video.duration }));
+  assert(remoteResult.src.includes("/seg?u="), `Expected Remote direct /seg source, got ${remoteResult.src}`);
+  assert.equal(remoteResult.paused, false, "Remote source video must actually be playing");
+  const remoteRequests = requests.slice(remoteCaseStart);
+  assert(remoteRequests.some(request => request.path === "/remote-api.php" && new URLSearchParams(request.query).get("play") === "opaque-episode-1"
+    && new URLSearchParams(request.query).get("flag") === "Remote 线路"), "Remote playerContent must resolve opaque episode ID using play and flag");
+  assert(remoteRequests.some(request => request.path === "/seg" && request.range?.startsWith("bytes=")), "Remote MP4 playback must make a ranged /seg request");
+  assert.deepEqual(external.slice(remoteExternalStart), [], "Remote case must make no external network requests");
+  assert.deepEqual(pageErrors, [], "Browser script errors across source protocols");
+  report.cases.push({ name: "tvbox-remote-playcontent-to-mp4", status: "passed", result: remoteResult,
+    requests: remoteRequests.filter(request => request.path === "/seg" || request.path === "/remote-api.php") });
+  console.log(`PASS tvbox-remote-playcontent-to-mp4: ${JSON.stringify(remoteResult)}`);
   await context.close();
 } catch (error) {
   report.cases.push({ name: "tvbox-playback-suite", status: "failed", error: String(error.stack || error), requests });
