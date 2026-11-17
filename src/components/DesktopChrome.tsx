@@ -5,7 +5,7 @@ import { useStore, type Tab } from "../store";
 import { APP_VERSION } from "../api";
 import { Avatar } from "./ui";
 import {
-  IClose, IGrid, IGridF, IHome, IHomeF, IMinus, IMoon, IRestore, ISearch, ISettings, ISidebar,
+  IClose, IGrid, IGridF, IHome, IHomeF, IMinus, IMoon, IRestore, ISearch, ISettings, ISidebar, ITv,
   ISquare, ISun, ITrophy, IUser, IUserF, Logo,
 } from "../icons";
 
@@ -70,6 +70,7 @@ export function DesktopRail({ collapsed }: { collapsed: boolean }) {
   const items: { key: Tab; label: string; Icon: typeof IHome; Filled: typeof IHomeF }[] = [
     { key: "home", label: "首页", Icon: IHome, Filled: IHomeF },
     { key: "category", label: "影视", Icon: IGrid, Filled: IGridF },
+    { key: "live", label: "直播", Icon: ITv, Filled: ITv },
     { key: "profile", label: "我的", Icon: IUser, Filled: IUserF },
   ];
   return (
