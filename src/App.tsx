@@ -9,6 +9,7 @@ import { runBack } from "./back";
 import Home from "./pages/Home";
 import Search, { RankPage } from "./pages/Search";
 import BrowsePage from "./pages/Browse";
+import LivePage from "./pages/Live";
 import { ChannelPage } from "./pages/Category";
 import Profile from "./pages/Profile";
 import SettingsPage from "./pages/Settings";
@@ -21,7 +22,7 @@ import { ToastHost } from "./components/ui";
 import { DesktopRail, DesktopTitleBar } from "./components/DesktopChrome";
 import ResizeHandles from "./components/ResizeHandles";
 import { tracePlayback } from "./playbackDiagnostics";
-import { IGrid, IGridF, IHome, IHomeF, ILockF, ISearch, IUser, IUserF, Logo } from "./icons";
+import { IGrid, IGridF, IHome, IHomeF, ILockF, ISearch, ITv, IUser, IUserF, Logo } from "./icons";
 
 function TabBar() {
   const { tab, setTab, platform } = useStore();
@@ -29,6 +30,7 @@ function TabBar() {
     { key: "home", label: "首页", Icon: IHome, Active: IHomeF },
     { key: "search", label: "搜索", Icon: ISearch, Active: ISearch },
     { key: "category", label: "影视", Icon: IGrid, Active: IGridF },
+    { key: "live", label: "直播", Icon: ITv, Active: ITv },
     { key: "profile", label: "我的", Icon: IUser, Active: IUserF },
   ] as const;
   const index = items.findIndex(item => item.key === tab);
@@ -102,8 +104,8 @@ function AppBody() {
       if (loginOpen) { if (e.key === "Escape") setLoginOpen(false); return; }
       if (e.key === "Escape") { if (stack.length) pop(); return; }
       if (e.key === "/") { e.preventDefault(); setTab("search"); return; }
-      if (["1", "2", "3", "4"].includes(e.key) && !e.repeat) {
-        setTab((["home", "search", "category", "profile"] as Tab[])[Number(e.key) - 1]);
+      if (["1", "2", "3", "4", "5"].includes(e.key) && !e.repeat) {
+        setTab((["home", "search", "category", "live", "profile"] as Tab[])[Number(e.key) - 1]);
       }
     };
     window.addEventListener("keydown", fn);
@@ -125,6 +127,7 @@ function AppBody() {
         <div className={vis("home")} inert={!pageActive || tab !== "home"} aria-hidden={!pageActive || tab !== "home"}><Home active={pageActive && tab === "home"} bottomInset={bottomInset} /></div>
         <div className={vis("search")} inert={!pageActive || tab !== "search"} aria-hidden={!pageActive || tab !== "search"}><Search active={pageActive && tab === "search"} wide={wide} /></div>
         <div className={vis("category")} inert={!pageActive || tab !== "category"} aria-hidden={!pageActive || tab !== "category"}><BrowsePage wide={wide} active={pageActive && tab === "category"} /></div>
+        <div className={vis("live")} inert={!pageActive || tab !== "live"} aria-hidden={!pageActive || tab !== "live"}><LivePage active={pageActive && tab === "live"} /></div>
         <div className={vis("profile")} inert={!pageActive || tab !== "profile"} aria-hidden={!pageActive || tab !== "profile"}><Profile wide={wide} /></div>
 
         {stack.map((p, i) => (
@@ -185,8 +188,8 @@ function ShellInner({ collapsed, theater }: { collapsed: boolean; theater: boole
       if (loginOpen) { if (e.key === "Escape") setLoginOpen(false); return; }
       if (e.key === "Escape") { if (stack.length) pop(); return; }
       if (e.key === "/") { e.preventDefault(); setTab("search"); return; }
-      if (["1", "2", "3", "4"].includes(e.key) && !e.repeat) {
-        setTab((["home", "search", "category", "profile"] as Tab[])[Number(e.key) - 1]);
+      if (["1", "2", "3", "4", "5"].includes(e.key) && !e.repeat) {
+        setTab((["home", "search", "category", "live", "profile"] as Tab[])[Number(e.key) - 1]);
       }
     };
     window.addEventListener("keydown", fn);
@@ -203,6 +206,7 @@ function ShellInner({ collapsed, theater }: { collapsed: boolean; theater: boole
         <div className={vis("home")} inert={!pageActive || tab !== "home"} aria-hidden={!pageActive || tab !== "home"}><Home active={pageActive && tab === "home"} bottomInset={14} /></div>
         <div className={vis("search")} inert={!pageActive || tab !== "search"} aria-hidden={!pageActive || tab !== "search"}><Search active={pageActive && tab === "search"} wide={wide} /></div>
         <div className={vis("category")} inert={!pageActive || tab !== "category"} aria-hidden={!pageActive || tab !== "category"}><BrowsePage wide={wide} active={pageActive && tab === "category"} /></div>
+        <div className={vis("live")} inert={!pageActive || tab !== "live"} aria-hidden={!pageActive || tab !== "live"}><LivePage active={pageActive && tab === "live"} /></div>
         <div className={vis("profile")} inert={!pageActive || tab !== "profile"} aria-hidden={!pageActive || tab !== "profile"}><Profile wide={wide} /></div>
         {stack.map((p, i) => (
           <div key={p.key} inert={i !== stack.length - 1 || loginOpen} aria-hidden={i !== stack.length - 1 || loginOpen} className="absolute inset-0 z-30 bg-bg win-page-in" style={{ boxShadow: "-18px 0 40px rgba(0,0,0,.5)" }}>
