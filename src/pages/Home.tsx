@@ -6,6 +6,17 @@ import type { VideoCard } from "../types";
 import { useStore } from "../store";
 import { ISearch } from "../icons";
 import { Empty } from "../components/ui";
+import {
+  activeTVBoxSource,
+  TVBOX_SOURCE_EVENT,
+  tvboxList,
+  type TVBoxCategory,
+  type TVBoxSource,
+  type TVBoxVideo,
+} from "../tvbox";
+import { BROWSE_MODE_EVENT, currentBrowseMode, type BrowseMode } from "../browseMode";
+
+type TVBoxRanking = "source" | "hot" | "score";
 
 /* Fisher-Yates 洗牌：首页第一页随机打乱，避免每次进来都停在同一个 top1 */
 function shuffle<T>(arr: T[]): T[] {
@@ -19,8 +30,15 @@ function shuffle<T>(arr: T[]): T[] {
 
 export default function Home({ active, bottomInset }: { active: boolean; bottomInset: number }) {
   const { toast, lineEpoch } = useStore();
+  const [mode, setMode] = useState<BrowseMode>(currentBrowseMode);
+  const [tvboxSource, setTVBoxSource] = useState<TVBoxSource | null>(activeTVBoxSource);
   const [items, setItems] = useState<VideoCard[]>([]);
+  const [tvboxItems, setTVBoxItems] = useState<TVBoxVideo[]>([]);
+  const [categories, setCategories] = useState<TVBoxCategory[]>([]);
+  const [category, setCategory] = useState("");
+  const [ranking, setRanking] = useState<TVBoxRanking>("source");
   const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
@@ -32,31 +50,72 @@ export default function Home({ active, bottomInset }: { active: boolean; bottomI
   lineEpochRef.current = lineEpoch;
   const previousLineEpoch = useRef(lineEpoch);
   const requestSeq = useRef(0);
-  const reloadAfterLineChange = useRef(false);
+  const reloadAfterChange = useRef(false);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+
+  const resetResults = useCallback(() => {
+    requestSeq.current += 1;
+    loadingRef.current = false;
+    setLoading(false);
+    setItems([]);
+    setTVBoxItems([]);
+    setPage(1);
+    setPages(1);
+    setDone(false);
+    setError("");
+    retryAt.current = 0;
+    failStreak.current = 0;
+  }, []);
 
   const load = useCallback(async (p: number): Promise<void> => {
     if (loadingRef.current || (done && p > 1)) return;
     const requestEpoch = lineEpochRef.current;
+    const requestMode = modeRef.current;
+    const requestSource = tvboxSource;
+    if (requestMode === "tvbox" && !requestSource) { setDone(true); return; }
+    const requestSourceId = requestSource?.id ?? "";
+    const requestCategory = category;
     const requestId = ++requestSeq.current;
     loadingRef.current = true;
     setLoading(true);
     setError("");
     try {
-      const res = await api.feed(p, 30);
-      if (requestId !== requestSeq.current || requestEpoch !== lineEpochRef.current) return;
-      const list = res?.items || [];
-      const ordered = p === 1 ? shuffle(list) : list;
-      setItems((prev) => {
-        const base = p === 1 ? [] : prev;
-        const seen = new Set(base.map((x) => x.id));
-        return [...base, ...ordered.filter((x) => !seen.has(x.id))];
-      });
-      setPage(p);
+      if (requestMode === "tvbox" && requestSource) {
+        const res = await tvboxList(requestSource, p, requestCategory);
+        if (requestId !== requestSeq.current || requestMode !== modeRef.current
+          || requestSourceId !== (tvboxSource?.id ?? "") || requestCategory !== category) return;
+        const nextItems = res.items;
+        setTVBoxItems((prev) => {
+          const base = p === 1 ? [] : prev;
+          const seen = new Set(base.map((item) => item.localId));
+          return [...base, ...nextItems.filter((item) => !seen.has(item.localId))];
+        });
+        setCategories(res.categories);
+        setPage(p);
+        setPages(Math.max(1, res.pages));
+        setDone(!nextItems.length || p >= res.pages);
+      } else {
+        const res = await api.feed(p, 30);
+        if (requestId !== requestSeq.current || requestEpoch !== lineEpochRef.current
+          || requestMode !== modeRef.current) return;
+        const list = res?.items || [];
+        const ordered = p === 1 ? shuffle(list) : list;
+        setItems((prev) => {
+          const base = p === 1 ? [] : prev;
+          const seen = new Set(base.map((x) => x.id));
+          return [...base, ...ordered.filter((x) => !seen.has(x.id))];
+        });
+        setPage(p);
+        setPages(Math.max(1, res?.pagination?.pages || 1));
+        setDone(!list.length || (res?.pagination && p >= res.pagination.pages));
+      }
       failStreak.current = 0;
       retryAt.current = 0;
-      if (!list.length || (res?.pagination && p >= res.pagination.pages)) setDone(true);
     } catch (e) {
-      const stale = requestId !== requestSeq.current || requestEpoch !== lineEpochRef.current;
+      const stale = requestId !== requestSeq.current || requestMode !== modeRef.current
+        || (requestMode === "tvbox" && (requestSourceId !== (tvboxSource?.id ?? "") || requestCategory !== category))
+        || (requestMode === "category" && requestEpoch !== lineEpochRef.current);
       if (!stale) {
         const message = (e as Error).message || "加载失败";
         setError(message);
@@ -69,44 +128,104 @@ export default function Home({ active, bottomInset }: { active: boolean; bottomI
         setLoading(false);
       }
     }
-  }, [done, toast]);
+  }, [category, done, toast, tvboxSource]);
 
-  useEffect(() => { if (!items.length) void load(1); /* eslint-disable-next-line */ }, []);
+  /* 影视页模式为来源唯一依据；切源/导入后首页同步同一 TVBox 源。 */
+  useEffect(() => {
+    const syncSource = () => {
+      const current = activeTVBoxSource();
+      setTVBoxSource(current);
+      setCategories([]);
+      setCategory("");
+      setRanking("source");
+      resetResults();
+      reloadAfterChange.current = true;
+    };
+    window.addEventListener(TVBOX_SOURCE_EVENT, syncSource);
+    return () => window.removeEventListener(TVBOX_SOURCE_EVENT, syncSource);
+  }, [resetResults]);
 
-  /* 切换数据线路后丢弃旧首页结果，避免继续刷到上一条线路的缓存；隐藏时延迟请求到重新进入首页。 */
+  /* 首页跟随影视页的 HGhubX/TVBox 选择，不维护独立来源模式。 */
+  useEffect(() => {
+    const syncMode = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      const next = detail === "tvbox" || detail === "category" ? detail : currentBrowseMode();
+      if (next === modeRef.current) return;
+      modeRef.current = next;
+      setMode(next);
+      resetResults();
+      reloadAfterChange.current = true;
+    };
+    window.addEventListener(BROWSE_MODE_EVENT, syncMode);
+    return () => window.removeEventListener(BROWSE_MODE_EVENT, syncMode);
+  }, [resetResults]);
+
+  /* 切换数据线路后丢弃旧首页结果；TVBox API 不依赖 HGhubX 主线路。 */
   useEffect(() => {
     if (previousLineEpoch.current !== lineEpoch) {
       previousLineEpoch.current = lineEpoch;
-      requestSeq.current += 1;
-      loadingRef.current = false;
-      setLoading(false);
-      setItems([]);
-      setPage(1);
-      setDone(false);
-      setError("");
-      retryAt.current = 0;
-      failStreak.current = 0;
-      reloadAfterLineChange.current = true;
+      if (modeRef.current === "category") {
+        resetResults();
+        reloadAfterChange.current = true;
+      }
     }
-    if (reloadAfterLineChange.current && active) {
-      reloadAfterLineChange.current = false;
+    if (reloadAfterChange.current && active) {
+      reloadAfterChange.current = false;
       void load(1);
     }
-  }, [active, lineEpoch, load]);
+  }, [active, lineEpoch, load, resetResults]);
 
-  const ids = useMemo(() => items.map((v) => v.id), [items]);
+  /* 切换模式/分类后从第一页加载；直接复用新状态，避免旧模式闭包发出错误请求。 */
+  useEffect(() => {
+    if (!items.length && !tvboxItems.length && !loading && (active || !reloadAfterChange.current)) void load(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, mode, tvboxSource?.id, category]);
+
+  const feedTVBoxItems = useMemo(() => {
+    const result = [...tvboxItems];
+    if (ranking === "hot") result.sort((a, b) => (b.hot ?? 0) - (a.hot ?? 0) || b.score - a.score);
+    else if (ranking === "score") result.sort((a, b) => b.score - a.score || (b.hot ?? 0) - (a.hot ?? 0));
+    return result;
+  }, [ranking, tvboxItems]);
+  const feedIds = mode === "tvbox" ? feedTVBoxItems.map((video) => video.localId) : items.map((video) => video.id);
+  const hasItems = feedIds.length > 0;
+  const feedKey = `${mode}:${tvboxSource?.id ?? "hghubx"}:${category}:${ranking}:${lineEpoch}`;
+  const canLoadMore = !done && page < pages;
 
   return (
     <div className="absolute inset-0 bg-black">
-      {items.length ? (
-        <Feed videoIds={ids} mode="home" active={active} bottomInset={bottomInset}
-          onNearEnd={() => { if (!loading && !done && Date.now() >= retryAt.current) void load(page + 1); }} />
-      ) : !loading && error ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-bg">
-          <Empty icon={<ISearch size={26} />} title="首页加载失败" sub={error} action="重试" onAction={() => void load(1)} />
+      {mode === "tvbox" && tvboxSource && (
+        <div className="absolute left-3 right-3 z-10 grid gap-2" style={{ top: "calc(var(--sat, 0px) + 8px)" }}>
+          <div className="px-1 text-[11px] text-mut">影视页当前来源 · TVBox · {tvboxSource.name}</div>
+            <div className="flex gap-2">
+              <select aria-label="首页 TVBox 分类" value={category}
+                onChange={(event) => { setCategory(event.target.value); resetResults(); }}
+                className="h-8 min-w-0 flex-1 rounded-(--r-ctl) bg-s2 px-2 text-[12px] text-on outline-none">
+                <option value="">全部分类</option>
+                {categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+              <select aria-label="首页 TVBox 榜单" value={ranking}
+                onChange={(event) => setRanking(event.target.value as TVBoxRanking)}
+                title="按 TVBox 源返回的播放量排序；源未提供播放量时以评分作为次级排序"
+                className="h-8 min-w-0 flex-1 rounded-(--r-ctl) bg-s2 px-2 text-[12px] text-on outline-none">
+                <option value="source">源推荐</option>
+                <option value="hot">热度榜（无热度则看评分）</option>
+                <option value="score">评分榜</option>
+              </select>
+            </div>
         </div>
+      )}
+      {hasItems ? (
+        <Feed key={feedKey} videoIds={feedIds} mode="home" active={active} bottomInset={bottomInset}
+          tvboxSource={mode === "tvbox" ? tvboxSource ?? undefined : undefined}
+          tvboxItems={mode === "tvbox" ? feedTVBoxItems : undefined}
+          onNearEnd={() => { if (!loading && canLoadMore && Date.now() >= retryAt.current) void load(page + 1); }} />
+      ) : !loading && error ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-bg"><Empty icon={<ISearch size={26} />} title="首页加载失败" sub={error} action="重试" onAction={() => void load(1)} /></div>
       ) : !loading && done ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-bg"><Empty icon={<ISearch size={26} />} title="暂无视频" /></div>
+        <div className="absolute inset-0 flex items-center justify-center bg-bg"><Empty icon={<ISearch size={26} />}
+          title={mode === "tvbox" && !tvboxSource ? "尚未选择 TVBox 源" : "暂无视频"}
+          sub={mode === "tvbox" && !tvboxSource ? "请在影视页添加或选择 TVBox 源" : undefined} /></div>
       ) : (
         <div className="absolute inset-0 flex items-center justify-center"><Loader className="w-9 h-9 spinner" /></div>
       )}

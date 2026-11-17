@@ -3,30 +3,21 @@ import Category from "./Category";
 import TVBoxPage from "./TVBox";
 import { TVBOX_SOURCE_EVENT } from "../tvbox";
 import type { BrowseMode } from "../components/BrowseModeSwitch";
-
-const BROWSE_MODE_KEY = "hghubx_browse_mode_v1";
-
-function readBrowseMode(): BrowseMode {
-  try {
-    return localStorage.getItem(BROWSE_MODE_KEY) === "tvbox" ? "tvbox" : "category";
-  } catch {
-    return "category";
-  }
-}
+import { currentBrowseMode, setBrowseMode } from "../browseMode";
 
 export default function BrowsePage({ active, wide }: { active: boolean; wide: boolean }) {
-  const [mode, setMode] = useState<BrowseMode>(readBrowseMode);
+  const [mode, setMode] = useState<BrowseMode>(currentBrowseMode);
 
   const handleModeChange = (next: BrowseMode) => {
     setMode(next);
-    try { localStorage.setItem(BROWSE_MODE_KEY, next); } catch { /* storage may be unavailable */ }
+    setBrowseMode(next);
   };
 
   useEffect(() => {
     const onTvboxChange = (event: Event) => {
       if ((event as CustomEvent<unknown>).detail) {
         setMode("tvbox");
-        try { localStorage.setItem(BROWSE_MODE_KEY, "tvbox"); } catch { /* ignore */ }
+        setBrowseMode("tvbox");
       }
     };
     window.addEventListener(TVBOX_SOURCE_EVENT, onTvboxChange);

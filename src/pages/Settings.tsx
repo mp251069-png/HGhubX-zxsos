@@ -132,10 +132,14 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
     setTVBoxImportError("");
     try {
       const result = await importTVBoxSources(rawUrl, sourceName);
+      syncLiveState();
+      const liveSummary = result.liveImported || result.liveFailed || result.liveSkipped
+        ? `，直播源导入 ${result.liveImported} 个${result.liveFailed ? `，失败 ${result.liveFailed} 个` : ""}${result.liveSkipped ? `，跳过 ${result.liveSkipped} 个` : ""}`
+        : "";
       if (result.repositories?.length) {
         setTVBoxRepositories(result.repositories);
         setTVBoxRepositoryUrl(rawUrl);
-        toast(`检测到 ${result.repositories.length} 个子配置，请选择后导入`, "info");
+        toast(`检测到 ${result.repositories.length} 个子配置，请选择后导入${liveSummary}`, "info");
         return;
       }
       if (result.sources[0]) selectTVBoxSource(result.sources[0].id);
@@ -147,8 +151,9 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
       setTVBoxName("");
       setTVBoxRepositories([]);
       setTVBoxRepositoryUrl("");
-      toast(`已添加 ${result.sources.length} 个 TVBox 源${result.spiderSkipped ? `，跳过 ${result.spiderSkipped} 个不支持的运行器源` : ""}`, "ok");
-      setTab("category");
+      const sourceSummary = result.sources.length ? `已添加 ${result.sources.length} 个 TVBox 源` : "已处理 TVBox 配置";
+      toast(`${sourceSummary}${result.spiderSkipped ? `，跳过 ${result.spiderSkipped} 个不支持的运行器源` : ""}${liveSummary}`, "ok");
+      setTab(result.sources.length || !result.liveImported && !result.liveSkipped ? "category" : "live");
     } catch (error) {
       const message = error instanceof Error ? error.message : typeof error === "string" ? error : "导入 TVBox 源失败";
       setTVBoxImportError(message);
