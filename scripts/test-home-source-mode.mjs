@@ -24,17 +24,24 @@ includes(home, /tvboxItems=\{mode === "tvbox" \? tvboxItems : undefined\}/,
 assert.doesNotMatch(home, /aria-label="首页 TVBox 分类"|aria-label="首页 TVBox 榜单"|全部分类|热度榜|评分榜|TVBoxRanking|feedTVBoxItems/,
   "Home must not expose TVBox category or ranking controls");
 
-// The TVBox catalog retains source-provided category IDs/names, HGhubX filter styling,
-// and source-local rankings, separate from Home's feed mode.
-includes(tvboxPage, /aria-label="TVBox 影视分类"/, "TVBox page must expose the source categories");
-includes(tvboxPage, /className="ios-filter-pill shrink-0">全部分类<\/Button>/,
-  "TVBox page must use the shared HGhubX filter-pill style for the all-categories control");
-includes(tvboxPage, /key=\{item\.id\} aria-pressed=\{category === item\.id\} onClick=\{\(\) => chooseCategory\(item\.id\)\}[\s\S]*className="ios-filter-pill shrink-0">\{item\.name\}/,
-  "TVBox page must preserve source category IDs and names with the shared filter style");
+// The TVBox catalog exposes source categories as horizontal shelves with full-list
+// navigation, while source-local ranking controls remain separate from Home.
+assert.doesNotMatch(tvboxPage, /aria-label="TVBox 影视分类"/,
+  "TVBox page must not restore the removed top category row");
+includes(tvboxPage, /<section key=\{item\.id\} aria-label=\{item\.name\}/,
+  "TVBox shelves must preserve source category IDs and names");
+includes(tvboxPage, /onClick=\{\(\) => chooseCategory\(item\.id\)\} aria-label=\{`查看全部\$\{item\.name\}`\}/,
+  "View all must open the selected source category by its original ID");
+includes(tvboxPage, /<TVBoxVideoRail items=\{shelf\.items\}/,
+  "Source categories must display horizontal video shelves");
+includes(tvboxPage, /tvboxList\(currentSource, nextPage, category\)/,
+  "Full lists must request the selected category on each page");
+includes(tvboxPage, /loadPage\(submitted, page \+ 1\)/,
+  "Full category lists must retain pagination");
 includes(tvboxPage, /aria-label="TVBox 榜单"/, "TVBox page must retain ranking choices");
-includes(tvboxPage, /ranking === "hot"[\s\S]*b\.hot - a\.hot \|\| b\.score - a\.score/,
+includes(tvboxPage, /ranking === "hot"[\s\S]*\(b\.hot \?\? 0\) - \(a\.hot \?\? 0\) \|\| b\.score - a\.score/,
   "hot ranking must use source play-count data and score as a fallback");
-includes(tvboxPage, /b\.score - a\.score \|\| b\.hot - a\.hot/,
+includes(tvboxPage, /b\.score - a\.score \|\| \(b\.hot \?\? 0\) - \(a\.hot \?\? 0\)/,
   "score ranking must sort by source-provided scores");
 
 // Switching source/mode must invalidate requests and clear both catalogs before
