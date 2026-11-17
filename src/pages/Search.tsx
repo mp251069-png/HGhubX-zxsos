@@ -12,7 +12,7 @@ import { activeTVBoxSource, TVBOX_SOURCE_EVENT, tvboxList, tvboxSearch, tvboxVid
 const HOT_TAGS = ["都市", "逆袭", "古风", "系统", "后宫", "校园", "仙侠", "职场", "大男主", "御姐", "脑洞", "奇幻"];
 
 export default function Search({ active, wide }: { active: boolean; wide: boolean }) {
-  const { push, searchHist, addSearch, clearSearchHist, toast } = useStore();
+  const { push, searchHist, addSearch, clearSearchHist, toast, lineEpoch } = useStore();
   const [q, setQ] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [tab, setTab] = useState<"video" | "post">("video");
@@ -36,6 +36,35 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
   const [tvboxItems, setTVBoxItems] = useState<TVBoxVideo[]>([]);
   const [tvboxCategories, setTVBoxCategories] = useState<TVBoxCategory[]>([]);
   const [tvboxCategory, setTVBoxCategory] = useState("");
+  const lineEpochRef = useRef(lineEpoch);
+  lineEpochRef.current = lineEpoch;
+  const seenLineEpoch = useRef(lineEpoch);
+  const lineReloadPending = useRef(false);
+  const hotLoadedEpoch = useRef(-1);
+  const hotRefreshPending = useRef(false);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const catalogModeRef = useRef(catalogMode);
+  catalogModeRef.current = catalogMode;
+  useEffect(() => {
+    if (seenLineEpoch.current === lineEpoch) return;
+    seenLineEpoch.current = lineEpoch;
+    if (catalogModeRef.current !== "hghubx") return;
+    seqRef.current++;
+    busy.current = false;
+    setLoading(false);
+    setItems([]);
+    setPosts([]);
+    setPage(0);
+    setPages(1);
+    setErr(null);
+    setHotVideos([]);
+    setHotError(null);
+    hotLoadedAt.current = 0;
+    hotLoadedEpoch.current = -1;
+    hotRefreshPending.current = false;
+    lineReloadPending.current = true;
+  }, [lineEpoch]);
 
   useEffect(() => {
     const sync = () => {
@@ -58,28 +87,49 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
 
   const refreshHot = async () => {
     if (hotBusy.current) return;
+    const requestEpoch = lineEpochRef.current;
+    hotRefreshPending.current = false;
     hotBusy.current = true;
     setHotLoading(true);
     setHotError(null);
     try {
       const res = await api.searchHot();
+      if (requestEpoch !== lineEpochRef.current) {
+        hotRefreshPending.current = true;
+        return;
+      }
       setHotVideos(res.items);
       hotLoadedAt.current = Date.now();
+      hotLoadedEpoch.current = requestEpoch;
     } catch (e) {
+      if (requestEpoch !== lineEpochRef.current) {
+        hotRefreshPending.current = true;
+        return;
+      }
       setHotError(e instanceof Error ? e.message : "热搜榜加载失败，请重试");
     } finally {
       hotBusy.current = false;
       setHotLoading(false);
+      if (hotRefreshPending.current && activeRef.current && catalogModeRef.current === "hghubx") {
+        hotRefreshPending.current = false;
+        if (hotLoadedEpoch.current !== lineEpochRef.current) void refreshHot();
+      }
     }
   };
   useEffect(() => {
     // 切换主导航时短暂复用榜单；手动刷新始终重新获取官网内容。
-    if (active && catalogMode === "hghubx" && Date.now() - hotLoadedAt.current > 60_000) void refreshHot();
-  }, [active, catalogMode]);
+    if (!active || catalogMode !== "hghubx") return;
+    if (hotLoadedEpoch.current !== lineEpoch || Date.now() - hotLoadedAt.current > 60_000) {
+      if (hotBusy.current) hotRefreshPending.current = true;
+      else void refreshHot();
+    }
+  }, [active, catalogMode, lineEpoch]);
 
   const run = async (keyword: string, p: number, kind: "video" | "post" = tab) => {
     if (p > 1 && (busy.current || p > pages)) return;
     const seq = p === 1 ? ++seqRef.current : seqRef.current;
+    const requestLineEpoch = lineEpochRef.current;
+    const tvboxRequest = catalogMode === "tvbox" && !!tvboxSource;
     busy.current = true;
     setLoading(true);
     try {
@@ -107,7 +157,7 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
         return;
       }
       const res = await api.search(keyword, p, 20, kind);
-      if (seq !== seqRef.current) return;
+      if (seq !== seqRef.current || (!tvboxRequest && requestLineEpoch !== lineEpochRef.current)) return;
       if (kind === "post") {
         const list = (res?.items || []) as unknown as Post[];
         setPosts((prev) => {
@@ -127,7 +177,7 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
       setPages(res?.pagination?.pages || 1);
       setErr(null);
     } catch (e) {
-      if (seq !== seqRef.current) return;
+      if (seq !== seqRef.current || (!tvboxRequest && requestLineEpoch !== lineEpochRef.current)) return;
       setErr((e as Error).message || "搜索失败");
     } finally {
       if (seq === seqRef.current) {
@@ -149,6 +199,12 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
     // Loading is intentionally tied to source/mode/category navigation, not result state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, catalogMode, tvboxSource?.id, tvboxCategory]);
+
+  useEffect(() => {
+    if (!active || catalogMode !== "hghubx" || !lineReloadPending.current) return;
+    lineReloadPending.current = false;
+    if (submitted) void run(submitted, 1, tab);
+  }, [active, catalogMode, lineEpoch, submitted, tab]);
 
   const changeCatalogMode = (next: "hghubx" | "tvbox") => {
     if (next === catalogMode) return;
@@ -364,7 +420,7 @@ const RANK_TABS = [
 ] as const;
 
 export function RankPage({ onBack, wide }: { onBack: () => void; wide: boolean }) {
-  const { push, toast } = useStore();
+  const { push, toast, lineEpoch } = useStore();
   const [tab, setTab] = useState<"hot" | "recommend" | "potential">("hot");
   const [items, setItems] = useState<RankItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -377,7 +433,7 @@ export function RankPage({ onBack, wide }: { onBack: () => void; wide: boolean }
       .catch((e) => { if (alive) { setItems([]); toast((e as Error).message || "榜单加载失败", "info"); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [tab, toast]);
+  }, [tab, toast, lineEpoch]);
 
   const max = Math.max(1, ...items.map((x) => x.metric_value || 0));
   const meta = RANK_TABS.find((t) => t.k === tab)!;

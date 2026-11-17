@@ -172,7 +172,7 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
       setLiveUrl("");
       setLiveName("");
       toast(`已导入直播源「${imported.name}」（${imported.channels.length} 个频道${imported.skippedUnsafe ? `，过滤 ${imported.skippedUnsafe} 条不安全链接` : ""}）`, "ok");
-      setTab("category");
+      setTab("live");
     } catch (error) {
       const message = error instanceof Error ? error.message : typeof error === "string" ? error : "导入 M3U 直播源失败";
       setLiveImportError(message);
@@ -190,7 +190,7 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
       setLiveText("");
       setLiveName("");
       toast(`已导入直播源「${imported.name}」（${imported.channels.length} 个频道${imported.skippedUnsafe ? `，过滤 ${imported.skippedUnsafe} 条不安全链接` : ""}）`, "ok");
-      setTab("category");
+      setTab("live");
     } catch (error) {
       const message = error instanceof Error ? error.message : typeof error === "string" ? error : "解析 M3U 内容失败";
       setLiveImportError(message);

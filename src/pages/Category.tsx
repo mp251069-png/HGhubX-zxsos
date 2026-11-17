@@ -88,7 +88,7 @@ export default function Category({ wide, active, onBrowseModeChange }: { wide: b
           <h1 className="ios-page-title text-on">影视</h1>
           <span className="text-[12px] text-mut pb-0.5">{CHANNELS.length + 1} 个频道 · 每周持续上新</span>
         </div>
-        <BrowseModeSwitch mode="category" lastVodMode="category" onChange={onBrowseModeChange} />
+        <BrowseModeSwitch mode="category" onChange={onBrowseModeChange} />
       </div>
 
       <div className="flex-1 scroll-y pb-24 pt-2">

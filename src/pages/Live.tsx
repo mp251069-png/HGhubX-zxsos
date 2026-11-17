@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import BrowseModeSwitch, { type BrowseMode } from "../components/BrowseModeSwitch";
 import LivePlayer from "../components/LivePlayer";
 import { Button, Form, Input, Surface } from "../components/ios/controls";
 import { Empty } from "../components/ui";
@@ -25,13 +24,8 @@ import { useStore } from "../store";
 
 export default function LivePage({
   active,
-  lastVodMode = "category",
-  onBrowseModeChange,
 }: {
   active: boolean;
-  wide?: boolean;
-  lastVodMode?: "category" | "tvbox";
-  onBrowseModeChange: (mode: BrowseMode) => void;
 }) {
   const { push } = useStore();
   const [sources, setSources] = useState<LiveSource[]>(loadLiveSources);
@@ -129,10 +123,9 @@ export default function LivePage({
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
       <div className="shrink-0 px-4 pt-3 pb-2.5" style={{ paddingTop: "calc(var(--sat, 0px) + 12px)" }}>
         <div className="flex items-end gap-2.5 mb-2.5">
-          <h1 className="ios-page-title text-on">影视</h1>
+          <h1 className="ios-page-title text-on">直播</h1>
           <span className="text-[12px] text-mut pb-0.5">APTV / M3U 电视直播 · 通用订阅播放</span>
         </div>
-        <BrowseModeSwitch mode="live" lastVodMode={lastVodMode} onChange={onBrowseModeChange} />
 
         {!!sources.length && (
           <div className="mt-2.5 flex items-center gap-2">

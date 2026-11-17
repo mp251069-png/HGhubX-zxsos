@@ -30,60 +30,69 @@ export default function Home({ active, bottomInset }: { active: boolean; bottomI
   const failStreak = useRef(0);
   const lineEpochRef = useRef(lineEpoch);
   lineEpochRef.current = lineEpoch;
-  const itemsRef = useRef(items);
-  itemsRef.current = items;
+  const previousLineEpoch = useRef(lineEpoch);
+  const requestSeq = useRef(0);
+  const reloadAfterLineChange = useRef(false);
 
   const load = useCallback(async (p: number): Promise<void> => {
     if (loadingRef.current || (done && p > 1)) return;
     const requestEpoch = lineEpochRef.current;
-    let retryAfterLineChange = false;
+    const requestId = ++requestSeq.current;
     loadingRef.current = true;
     setLoading(true);
     setError("");
     try {
       const res = await api.feed(p, 30);
+      if (requestId !== requestSeq.current || requestEpoch !== lineEpochRef.current) return;
       const list = res?.items || [];
       const ordered = p === 1 ? shuffle(list) : list;
       setItems((prev) => {
-        const seen = new Set(prev.map((x) => x.id));
-        return [...prev, ...ordered.filter((x) => !seen.has(x.id))];
+        const base = p === 1 ? [] : prev;
+        const seen = new Set(base.map((x) => x.id));
+        return [...base, ...ordered.filter((x) => !seen.has(x.id))];
       });
       setPage(p);
       failStreak.current = 0;
       retryAt.current = 0;
       if (!list.length || (res?.pagination && p >= res.pagination.pages)) setDone(true);
     } catch (e) {
-      const message = (e as Error).message || "加载失败";
-      const stale = requestEpoch !== lineEpochRef.current;
+      const stale = requestId !== requestSeq.current || requestEpoch !== lineEpochRef.current;
       if (!stale) {
+        const message = (e as Error).message || "加载失败";
         setError(message);
         if (p > 1) retryAt.current = Date.now() + 5000;
         if (failStreak.current++ === 0) toast(message, "info");
       }
-      /* 请求在旧线路上发出、期间线路已切换：等 finally 里用新线路补拉一次 */
-      if (stale && !itemsRef.current.length) retryAfterLineChange = true;
     } finally {
-      loadingRef.current = false;
-      setLoading(false);
-      if (retryAfterLineChange) {
-        setDone(false);
-        setError("");
-        void load(1);
+      if (requestId === requestSeq.current) {
+        loadingRef.current = false;
+        setLoading(false);
       }
     }
   }, [done, toast]);
 
-  useEffect(() => { if (!items.length) load(1); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { if (!items.length) void load(1); /* eslint-disable-next-line */ }, []);
 
-  /* 线路切换后：首页还没拿到数据（加载失败或空）就在新线路上重拉一次。
-     已有数据时不动，避免打断正在播放的视频。 */
+  /* 切换数据线路后丢弃旧首页结果，避免继续刷到上一条线路的缓存；隐藏时延迟请求到重新进入首页。 */
   useEffect(() => {
-    if (!lineEpoch || items.length || loadingRef.current) return;
-    setDone(false);
-    setError("");
-    void load(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lineEpoch]);
+    if (previousLineEpoch.current !== lineEpoch) {
+      previousLineEpoch.current = lineEpoch;
+      requestSeq.current += 1;
+      loadingRef.current = false;
+      setLoading(false);
+      setItems([]);
+      setPage(1);
+      setDone(false);
+      setError("");
+      retryAt.current = 0;
+      failStreak.current = 0;
+      reloadAfterLineChange.current = true;
+    }
+    if (reloadAfterLineChange.current && active) {
+      reloadAfterLineChange.current = false;
+      void load(1);
+    }
+  }, [active, lineEpoch, load]);
 
   const ids = useMemo(() => items.map((v) => v.id), [items]);
 
@@ -91,7 +100,7 @@ export default function Home({ active, bottomInset }: { active: boolean; bottomI
     <div className="absolute inset-0 bg-black">
       {items.length ? (
         <Feed videoIds={ids} mode="home" active={active} bottomInset={bottomInset}
-          onNearEnd={() => { if (!loading && !done && Date.now() >= retryAt.current) load(page + 1); }} />
+          onNearEnd={() => { if (!loading && !done && Date.now() >= retryAt.current) void load(page + 1); }} />
       ) : !loading && error ? (
         <div className="absolute inset-0 flex items-center justify-center bg-bg">
           <Empty icon={<ISearch size={26} />} title="首页加载失败" sub={error} action="重试" onAction={() => void load(1)} />

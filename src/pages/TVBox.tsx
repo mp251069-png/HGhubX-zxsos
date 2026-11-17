@@ -133,7 +133,7 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
           <h1 className="ios-page-title text-on">影视</h1>
           <span className="text-[12px] text-mut pb-0.5">TVBox 点播源 · 选片、搜索并播放</span>
         </div>
-        <BrowseModeSwitch mode="tvbox" lastVodMode="tvbox" onChange={onBrowseModeChange} />
+        <BrowseModeSwitch mode="tvbox" onChange={onBrowseModeChange} />
         {!!sources.length && (
           <select aria-label="TVBox 数据源" value={source?.id ?? ""}
             onChange={event => selectTVBoxSource(event.target.value)}
