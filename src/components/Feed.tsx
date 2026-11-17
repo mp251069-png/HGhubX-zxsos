@@ -103,8 +103,11 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     return () => window.clearTimeout(idleTimer.current);
   }, [isDesktop, wake]);
   useEffect(() => {
-    if (paused) { setIdle(false); window.clearTimeout(idleTimer.current); }
-  }, [paused]);
+    if (!paused) return;
+    if (!isDesktop && fs) { wake(); return; }
+    setIdle(false);
+    window.clearTimeout(idleTimer.current);
+  }, [paused, fs, isDesktop, wake]);
   const [fullscreen, setFullscreen] = useState(false);
   const [heartBurst, setHeartBurst] = useState(0);
   /* —— 移动端手势 —— */
@@ -1366,7 +1369,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
             }}>
             <ICompress size={18} />
           </Button>
-          <div className="absolute inset-x-0 z-40 flex items-center gap-3 px-4"
+          <div data-testid="mobile-fullscreen-controls" className="absolute inset-x-0 z-40 flex items-center gap-3 px-4"
             style={{
               bottom: rotated ? 10 : "calc(var(--sab, 0px) + 10px)",
               paddingLeft: rotated ? "calc(var(--sat, 0px) + 16px)" : undefined,
