@@ -6,10 +6,12 @@ import { tvboxList, type TVBoxSource, type TVBoxVideo } from "../src/tvbox";
 import "../src/index.css";
 
 const jsMode = new URLSearchParams(location.search).get("js") === "1";
+const sourceKind = new URLSearchParams(location.search).get("kind");
 const source: TVBoxSource = {
   id: "tvbox-playback-fixture",
   name: "TVBox Playback Fixture",
   url: jsMode ? "http://media.fixture.invalid/js/spider.mjs" : new URLSearchParams(location.search).get("api") || "",
+  ...(sourceKind === "xml" ? { kind: "xml" as const } : sourceKind === "remote" ? { kind: "remote" as const } : {}),
   ...(jsMode ? { kind: "js" as const, ext: { fixture: true } } : {}),
 };
 
@@ -45,7 +47,7 @@ function Fixture() {
         bottomInset={0}
         tvboxSource={source}
         tvboxItems={items}
-      /> : <p>正在加载{jsMode ? " JS Spider" : "标准 TVBox"} 详情…</p>}
+      /> : <p>正在加载{jsMode ? " JS Spider" : sourceKind === "xml" ? " XML TVBox" : sourceKind === "remote" ? " Remote TVBox" : "标准 TVBox"} 详情…</p>}
     </main>
   </AppProvider>;
 }
