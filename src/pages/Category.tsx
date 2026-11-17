@@ -7,9 +7,10 @@ import { useStore } from "../store";
 import { MediaCard, Masonry, RowCard } from "../components/cards";
 import { CollectionLink, CollectionLinks } from "../components/CollectionLink";
 import { InplaceSearch } from "../components/InplaceSearch";
-import BrowseModeSwitch, { type BrowseMode } from "../components/BrowseModeSwitch";
+import type { BrowseMode } from "../components/BrowseModeSwitch";
+import { MoviesPageHeader, MoviesShelfHeading } from "../components/MoviesChrome";
 import { Empty, Img } from "../components/ui";
-import { IBack, IChevR, IGlobe, IGrid, ISearch, ITrophy } from "../icons";
+import { IBack, IGlobe, IGrid, ISearch, ITrophy } from "../icons";
 
 export const CHANNELS = [
   { cate: "ai-duanju", name: "AI成人短剧", desc: "高能反转 · 一口气看完" },
@@ -83,13 +84,8 @@ export default function Category({ wide, active, onBrowseModeChange }: { wide: b
 
   return (
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
-      <div className="ios-page-heading shrink-0 px-4">
-        <div className="flex items-end gap-2.5">
-          <h1 className="ios-page-title text-on">影视</h1>
-          <span className="text-[12px] text-mut pb-0.5">{CHANNELS.length + 1} 个频道 · 每周持续上新</span>
-        </div>
-        <BrowseModeSwitch mode="category" onChange={onBrowseModeChange} />
-      </div>
+      <MoviesPageHeader mode="category" onChange={onBrowseModeChange}
+        summary={`${CHANNELS.length + 1} 个频道 · 每周持续上新`} />
 
       <div className="flex-1 scroll-y pb-24 pt-2">
         {/* 排行榜入口：只在移动端显示（底部导航没有排行榜，桌面侧栏已有） */}
@@ -110,19 +106,9 @@ export default function Category({ wide, active, onBrowseModeChange }: { wide: b
           const list = rows[c.cate] || [];
           return (
             <section key={c.cate} aria-label={c.name} className="mb-5 a-rise" style={{ animationDelay: `${Math.min(ci * 50, 300)}ms` }}>
-              <Button onClick={() => push({ kind: "channel", cate: c.cate, name: c.name })}
-                className="w-full flex items-center gap-2.5 px-4 mb-2.5 text-left pressable group">
-                <span className="w-[36px] h-[36px] rounded-(--r-sm) tonal flex items-center justify-center shrink-0 text-primary">
-                  <IGrid size={19} strokeWidth={1.9} />
-                </span>
-                <span className="flex-1 min-w-0">
-                  <span className="block text-[15.5px] font-semibold text-on leading-tight">{c.name}</span>
-                  <span className="block text-[12px] text-mut mt-0.5 truncate">{c.desc}</span>
-                </span>
-                <span className="flex items-center gap-0.5 text-[12px] text-mut group-hover:text-primary transition-colors">
-                  全部<IChevR size={14} />
-                </span>
-              </Button>
+              <MoviesShelfHeading title={c.name} subtitle={c.desc} actionLabel="全部"
+                actionAriaLabel={`查看全部${c.name}`}
+                onAction={() => push({ kind: "channel", cate: c.cate, name: c.name })} />
               <div className="scroll-x flex gap-2.5 px-4 snap-x">
                 {list.map((v) => (
                   <RowCard key={v.id} v={v} onOpen={() => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: c.name })} />
@@ -135,19 +121,8 @@ export default function Category({ wide, active, onBrowseModeChange }: { wide: b
 
         {/* 吃瓜 */}
         <section aria-label="吃瓜" className="mb-5 a-rise">
-          <Button onClick={() => push({ kind: "posts" })}
-            className="w-full flex items-center gap-2.5 px-4 mb-2.5 text-left pressable group">
-            <span className="w-[36px] h-[36px] rounded-(--r-sm) tonal flex items-center justify-center shrink-0 text-primary">
-              <IGrid size={19} strokeWidth={1.9} />
-            </span>
-            <span className="flex-1 min-w-0">
-              <span className="block text-[15.5px] font-semibold text-on leading-tight">吃瓜</span>
-              <span className="block text-[12px] text-mut mt-0.5 truncate">圈内爆料 · 每日更新</span>
-            </span>
-            <span className="flex items-center gap-0.5 text-[12px] text-mut group-hover:text-primary transition-colors">
-              全部<IChevR size={14} />
-            </span>
-          </Button>
+          <MoviesShelfHeading title="吃瓜" subtitle="圈内爆料 · 每日更新" actionLabel="全部"
+            actionAriaLabel="查看全部吃瓜" onAction={() => push({ kind: "posts" })} />
           <div className="scroll-x flex gap-2.5 px-4 snap-x">
             {posts.map((post) => (
               <div key={post.id} className="ios-row-card"><MediaCard title={post.title} cover={post.cover}

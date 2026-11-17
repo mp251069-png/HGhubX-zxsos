@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Form, Input, Surface } from "../components/ios/controls";
 import { Loader } from "../components/ios/effects";
 import { Empty } from "../components/ui";
-import { Masonry, WaterfallCard } from "../components/cards";
-import BrowseModeSwitch, { type BrowseMode } from "../components/BrowseModeSwitch";
-import { IChevR, IClapper, IClose, ISearch } from "../icons";
+import { Masonry, RowCard } from "../components/cards";
+import type { BrowseMode } from "../components/BrowseModeSwitch";
+import { MoviesPageHeader, MoviesShelfHeading } from "../components/MoviesChrome";
+import { IBack, IClapper, IClose, ISearch } from "../icons";
 import { useStore } from "../store";
 import {
   activeTVBoxSource,
@@ -36,9 +37,8 @@ function TVBoxVideoRail({ items, source, ranking, onOpen }: {
 }) {
   const ordered = sortTVBoxVideos(items, ranking);
   return <div className="scroll-x flex gap-2.5 snap-x" aria-label={`${source.name} 影片横向列表`}>
-    {ordered.map(video => <div key={video.localId} className="ios-row-card">
-      <WaterfallCard v={tvboxVideoCard(video, source)} onOpen={() => onOpen(ordered, video)} />
-    </div>)}
+    {ordered.map(video => <RowCard key={video.localId} v={tvboxVideoCard(video, source)}
+      onOpen={() => onOpen(ordered, video)} />)}
   </div>;
 }
 
@@ -145,6 +145,16 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
       : b.score - a.score || b.hot - a.hot);
   }, [cards, ranking]);
 
+  const categoryName = categories.find(item => item.id === category)?.name ?? (category ? "当前分类" : "");
+  const contextTitle = submitted ? `搜索“${submitted}”` : categoryName || "影视目录";
+  const contextBackLabel = submitted && category ? `返回${categoryName}` : "返回分类总览";
+  const leaveContext = () => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    setQuery("");
+    setSubmitted("");
+    if (category && !submitted) chooseCategory("");
+  };
+
   useEffect(() => {
     if (!active || !source) return;
     void loadPage(submitted, 1);
@@ -210,13 +220,11 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
 
   return (
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
-      <div className="shrink-0 px-4 pt-3 pb-2" style={{ paddingTop: "calc(var(--sat, 0px) + 12px)" }}>
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="ios-page-title text-on">影视</h1>
-          <BrowseModeSwitch mode="tvbox" compact onChange={onBrowseModeChange} />
-        </div>
-        {!!sources.length && (
-          <div className="mt-2.5 flex min-w-0 items-center gap-2">
+      <MoviesPageHeader mode="tvbox" onChange={onBrowseModeChange}
+        summary={`${sources.length} 个源 · 分类浏览与搜索`} />
+      {!!sources.length && (
+        <div className="movies-tvbox-tools shrink-0 px-4 pb-2">
+          <div className="mt-3 flex min-w-0 items-center gap-2">
             <select aria-label="TVBox 数据源" value={source?.id ?? ""}
               onChange={event => selectTVBoxSource(event.target.value)}
               className="h-12 w-[42%] max-w-[200px] min-w-0 shrink-0 truncate rounded-(--r-ctl) bg-s2 px-3 text-[13px] text-on outline-none">
@@ -230,8 +238,8 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
               <Button type="submit" aria-label="搜索" className="ios-icon-button ios-button-primary mr-0.5"><ISearch size={16} /></Button>
             </Form>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {!source ? (
         <div className="flex-1 scroll-y px-4 pb-24 pt-2">
@@ -247,7 +255,7 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
         </div>
       ) : (
         <>
-          <div className="shrink-0 space-y-2 px-4 pb-2">
+          <div className="movies-tvbox-ranking shrink-0 space-y-2 px-4 pb-2">
             <div role="group" aria-label="TVBox 榜单" className="scroll-x flex gap-2"
               title="按 TVBox 源返回的播放量排序；源未提供播放量时以评分作为次级排序">
               <Button aria-pressed={ranking === "source"} onClick={() => setRanking("source")}
@@ -259,23 +267,27 @@ export default function TVBoxPage({ active, wide, onBrowseModeChange }: { active
             </div>
           </div>
           <div ref={scrollRef} className="flex-1 scroll-y px-4 pb-24">
+            {(submitted || category) && <nav aria-label="TVBox 分类位置" className="movies-context-nav">
+              <Button onClick={leaveContext} aria-label={contextBackLabel} className="movies-context-back pressable">
+                <IBack size={16} /><span>{contextBackLabel}</span>
+              </Button>
+              <div className="movies-context-copy">
+                <h2>{contextTitle}</h2>
+                <p>{source.name}{categoryName ? ` · ${categoryName}` : " · 全部分类"}</p>
+              </div>
+            </nav>}
             {!submitted && !category ? (
               <>
                 {cards.length > 0 && <section aria-label="源推荐" className="mb-5">
-                  <div className="mb-2 px-1">
-                    <h2 className="text-[16px] font-semibold text-on">源推荐</h2>
-                    <p className="mt-0.5 text-[12px] text-mut">{source.name} · 数据源首页内容</p>
-                  </div>
+                  <MoviesShelfHeading title="源推荐" subtitle={`${source.name} · 数据源首页内容`} />
                   <TVBoxVideoRail items={videos} source={source} ranking={ranking} onOpen={openVideoList} />
                 </section>}
                 {categories.map(item => {
                   const shelf = shelves[item.id];
                   return <section key={item.id} aria-label={item.name} className="mb-5">
-                    <div className="mb-2 flex items-center justify-between px-1">
-                      <h2 className="text-[16px] font-semibold text-on">{item.name}</h2>
-                      <Button onClick={() => chooseCategory(item.id)} aria-label={`查看全部${item.name}`}
-                        className="flex items-center gap-0.5 text-[12px] text-mut pressable">查看全部<IChevR size={14} /></Button>
-                    </div>
+                    <MoviesShelfHeading title={item.name} subtitle={`${source.name} · 源分类`}
+                      actionLabel="查看全部" actionAriaLabel={`查看全部${item.name}`}
+                      onAction={() => chooseCategory(item.id)} />
                     {shelf?.items.length ? <TVBoxVideoRail items={shelf.items} source={source} ranking={ranking} onOpen={openVideoList} />
                       : shelf?.loading ? <div role="status" aria-label={`正在加载${item.name}`} className="flex h-[150px] items-center justify-center"><Loader className="h-7 w-7 spinner" /></div>
                         : shelf?.error ? <div className="flex min-h-[92px] items-center gap-3 rounded-(--r-sm) bg-s2 px-3 text-[12px] text-mut">
