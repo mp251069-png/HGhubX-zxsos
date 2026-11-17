@@ -2,6 +2,7 @@ import { Button, Input, SegmentedControl, Surface, TextArea } from "../component
 import { useEffect, useState, type ReactNode } from "react";
 import { api, APP_VERSION, hostOf, logLine, platform, type UpdateInfo } from "../api";
 import { useStore } from "../store";
+import { APP_LOCK_INTERVALS_MINUTES, type AppLockIntervalMinutes } from "../appLock";
 import { Modal, Toggle } from "../components/ui";
 import LinePicker from "../components/LinePicker";
 import ProxySettings from "../components/ProxySettings";
@@ -24,7 +25,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 /* 独立设置页：线路 / 外观 / 播放 / 本地数据 / 清理缓存 / 网络诊断 / 关于
    入口：Windows 侧栏「设置」、Android「我的」右上角齿轮 */
 export default function Settings({ onBack, wide }: { onBack: () => void; wide: boolean }) {
-  const { platform, theme, themePreference, setTheme, setTab, favs, history, muteOnStartup, setMuteOnStartup, preferHevc, setPreferHevc, strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity, appLockEnabled, setAppLockEnabled, toast } = useStore();
+  const { platform, theme, themePreference, setTheme, setTab, favs, history, muteOnStartup, setMuteOnStartup, preferHevc, setPreferHevc, strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity, appLockEnabled, setAppLockEnabled, appLockIntervalMinutes, setAppLockIntervalMinutes, toast } = useStore();
   const [about, setAbout] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [lineOpen, setLineOpen] = useState(false);
@@ -124,6 +125,13 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
       toast(error.code === "userCancel" ? "已取消，设置未更改" : `验证失败，设置未更改${error.message ? `：${error.message}` : ""}`, "info");
     } finally {
       setAppLockPending(false);
+    }
+  };
+  const changeAppLockInterval = (value: string) => {
+    try {
+      setAppLockIntervalMinutes(Number(value) as AppLockIntervalMinutes);
+    } catch (e) {
+      toast((e as Error).message || "重新验证间隔保存失败", "info");
     }
   };
   const importTVBoxSource = async (rawUrl = tvboxUrl, sourceName = tvboxName) => {
@@ -250,11 +258,23 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
               <span className="ios-setting-icon"><ILockF size={16} /></span>
               <div className="flex-1 min-w-0">
                 <div className="text-[14px] text-on">App 上锁</div>
-                <div className="text-[12px] text-mut">离开后自动锁定；返回时使用 Face ID / Touch ID 或设备密码解锁</div>
+                <div className="text-[12px] text-mut">重启应用后总会验证；运行中切回前台超过 {appLockIntervalMinutes} 分钟也会验证</div>
               </div>
               <Toggle label="App 上锁" on={appLockEnabled} disabled={appLockPending}
                 onChange={(on) => { void changeAppLock(on); }} />
             </div>
+            {appLockEnabled && <div className="flex items-center gap-3 px-3.5 py-3">
+              <span className="ios-setting-icon"><IRefresh size={16} /></span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[14px] text-on">重新验证间隔</div>
+                <div className="text-[12px] text-mut">从上次成功验证开始计时</div>
+              </div>
+              <select aria-label="Face ID 重新验证间隔" value={appLockIntervalMinutes}
+                onChange={event => changeAppLockInterval(event.target.value)}
+                className="h-10 w-[112px] shrink-0 rounded-(--r-ctl) bg-s2 px-3 text-[13px] text-on outline-none">
+                {APP_LOCK_INTERVALS_MINUTES.map(minutes => <option key={minutes} value={minutes}>{minutes} 分钟</option>)}
+              </select>
+            </div>}
           </Section>}
 
           <Section title="播放">
