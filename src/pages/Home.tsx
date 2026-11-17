@@ -199,4 +199,3 @@ export default function Home({ active, bottomInset }: { active: boolean; bottomI
     </div>
   );
 }
-
