@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && tsc --project tsconfig.tests.json && vite build",
     "preview": "vite preview",
     "test:tvbox": "node scripts/test-tvbox.mjs",
+    "test:app-lock": "node scripts/test-app-lock.mjs",
     "test:live": "node scripts/test-live.mjs",
     "test:playback": "node scripts/test-playback.mjs",
     "test:api-loading": "node scripts/test-api-loading.mjs",
