@@ -64,6 +64,12 @@ pub async fn tvbox_fetch(url: String) -> Result<Value, String> {
     crate::tvbox::fetch_json(&url).await
 }
 
+/// Fetch a bounded UTF-8 XML/text response from a user-configured TVBox source.
+#[tauri::command]
+pub async fn tvbox_fetch_text(url: String) -> Result<String, String> {
+    crate::tvbox::fetch_text(&url).await
+}
+
 /// Fetch a bounded UTF-8 M3U/M3U8 playlist from a user-configured live source URL.
 #[tauri::command]
 pub async fn live_fetch(url: String) -> Result<Value, String> {

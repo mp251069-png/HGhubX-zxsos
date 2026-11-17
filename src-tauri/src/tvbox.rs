@@ -167,6 +167,47 @@ pub async fn fetch_json(url: &str) -> Result<Value, String> {
     .map_err(|_| "TVBox 请求超过 20 秒".to_string())?
 }
 
+/// Fetch a bounded UTF-8 XML/text document from a user-configured TVBox source.
+pub async fn fetch_text(url: &str) -> Result<String, String> {
+    tokio::time::timeout(REQUEST_TIMEOUT, async {
+        let response = crate::net::get(
+            url,
+            REQUEST_TIMEOUT,
+            Some("application/xml, text/xml, text/plain, */*"),
+            None,
+        )
+        .await?;
+        if !response.status().is_success() {
+            return Err(format!("HTTP {}", response.status().as_u16()));
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_JSON_BYTES as u64)
+        {
+            return Err("TVBox XML 响应超过 4 MiB 限制".into());
+        }
+        let mut response = response;
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            if error.is_timeout() {
+                "请求超时".to_string()
+            } else {
+                "读取 TVBox XML 失败".to_string()
+            }
+        })? {
+            if body.len().saturating_add(chunk.len()) > MAX_JSON_BYTES {
+                return Err("TVBox XML 响应超过 4 MiB 限制".into());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        std::str::from_utf8(&body)
+            .map(str::to_owned)
+            .map_err(|_| "TVBox XML 响应不是 UTF-8 文本".to_string())
+    })
+    .await
+    .map_err(|_| "TVBox XML 请求超过 20 秒".to_string())?
+}
+
 pub async fn fetch_m3u(url: &str) -> Result<Value, String> {
     tokio::time::timeout(REQUEST_TIMEOUT, async {
         let response = crate::net::get(
