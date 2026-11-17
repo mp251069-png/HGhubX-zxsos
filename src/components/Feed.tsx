@@ -377,12 +377,12 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     if (tvboxSource && tvboxItems) {
       const video = tvboxDetails[curId];
       if (!video) return () => { alive = false; };
-      if (tvboxSource.kind === "js") {
+      if (tvboxSource.kind === "js" || tvboxSource.kind === "remote") {
         const requestKey = playKey;
         const episode = video.playGroups[tvboxLine]?.episodes[curEp - 1];
         tvboxResolveMedia(tvboxSource, video.playGroups[tvboxLine]?.name || "", episode?.url || "")
           .then(streamUrl => { if (alive && requestKey === playKey) { setPlayUrls(current => ({ ...current, [requestKey]: streamUrl })); addHistory(curId, curEp); } })
-          .catch(error => { if (alive && requestKey === playKey) setErr((error as Error).message || "JS Spider 播放解析失败"); });
+          .catch(error => { if (alive && requestKey === playKey) setErr((error as Error).message || "TVBox 播放解析失败"); });
       } else try {
         const streamUrl = tvboxMediaUrl(video, curEp, tvboxLine);
         setPlayUrls(current => ({ ...current, [playKey]: streamUrl }));
