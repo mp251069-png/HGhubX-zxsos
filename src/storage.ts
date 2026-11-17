@@ -1,6 +1,8 @@
 export const STORAGE_KEYS = {
   app: "hghubx_app_v1",
   appLock: "hghubx_app_lock",
+  appLockInterval: "hghubx_app_lock_interval",
+  appLockLastAuthenticated: "hghubx_app_lock_last_authenticated",
   swipeEp: "hghubx_swipe_ep_v2",
   theme: "hghubx_theme",
   autoLine: "hghubx_auto_line",
@@ -12,6 +14,8 @@ type StorageKey = typeof STORAGE_KEYS[keyof typeof STORAGE_KEYS];
 const LEGACY_KEYS: Record<StorageKey, string> = {
   hghubx_app_v1: "hghub_app_v1",
   hghubx_app_lock: "hghub_app_lock",
+  hghubx_app_lock_interval: "hghub_app_lock_interval",
+  hghubx_app_lock_last_authenticated: "hghub_app_lock_last_authenticated",
   hghubx_swipe_ep_v2: "hghub_swipe_ep_v2",
   hghubx_theme: "hghub_theme",
   hghubx_auto_line: "hg.autoLine",

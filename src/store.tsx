@@ -4,6 +4,7 @@ import { isStrictSecurity, setStrictSecurity as setHtmlStrictSecurity } from "./
 import type { User } from "./types";
 import { readStorage, STORAGE_KEYS } from "./storage";
 import type { TVBoxSource, TVBoxVideo } from "./tvbox";
+import { normalizeAppLockIntervalMinutes, type AppLockIntervalMinutes } from "./appLock";
 
 export type Platform = "android" | "ios" | "windows" | "macos" | "linux";
 export type Theme = "dark" | "light";
@@ -188,6 +189,7 @@ type Store = {
   searchHist: string[]; addSearch: (q: string) => void; clearSearchHist: () => void;
   strictSecurity: boolean; strictSecurityReady: boolean; securityPending: boolean; cliRelaxed: boolean; setStrictSecurity: (on: boolean) => Promise<void>;
   appLockEnabled: boolean; setAppLockEnabled: (on: boolean) => void;
+  appLockIntervalMinutes: AppLockIntervalMinutes; setAppLockIntervalMinutes: (minutes: AppLockIntervalMinutes) => void;
   toasts: Toast[]; toast: (msg: string, icon?: Toast["icon"]) => void;
   /** 线路切换计数：变了就让列表页重挂载，重新拉一遍数据 */
   lineEpoch: number;
@@ -207,6 +209,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
   const [appLockEnabled, setAppLockEnabledState] = useState(() => readStorage(STORAGE_KEYS.appLock) === "1");
+  const [appLockIntervalMinutes, setAppLockIntervalMinutesState] = useState<AppLockIntervalMinutes>(
+    () => normalizeAppLockIntervalMinutes(readStorage(STORAGE_KEYS.appLockInterval)),
+  );
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [lineEpoch, setLineEpoch] = useState(0);
   const [theater, setTheaterState] = useState(false);
@@ -295,7 +300,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch {
       throw new Error("App 锁定设置保存失败，请检查设备存储空间");
     }
+    try {
+      if (on) localStorage.setItem(STORAGE_KEYS.appLockLastAuthenticated, String(Date.now()));
+      else localStorage.removeItem(STORAGE_KEYS.appLockLastAuthenticated);
+    } catch { /* App 锁仍保持有效；无法保存认证时间时，下次启动会要求验证 */ }
     setAppLockEnabledState(on);
+  }, []);
+
+  const setAppLockIntervalMinutes = useCallback((minutes: AppLockIntervalMinutes) => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.appLockInterval, String(minutes));
+    } catch {
+      throw new Error("Face ID 重新验证间隔保存失败，请检查设备存储空间");
+    }
+    setAppLockIntervalMinutesState(minutes);
   }, []);
 
   const toast = useCallback((msg: string, icon?: Toast["icon"]) => {
@@ -454,12 +472,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     preferHevc: p.preferHevc, setPreferHevc,
     searchHist: p.searchHist, addSearch, clearSearchHist,
     strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity,
-    appLockEnabled, setAppLockEnabled,
+    appLockEnabled, setAppLockEnabled, appLockIntervalMinutes, setAppLockIntervalMinutes,
     toasts, toast, lineEpoch,
   }), [theme, themePreference, setTheme, tab, setTab, stack, push, pop, user, loginOpen, logout,
     p, toggleLikeLocal, toggleFavLocal, toggleFollowLocal, addHistory, clearHistory,
     setMuted, setMuteOnStartup, setSwipeEp, setPreferHevc, setVolume, addSearch, clearSearchHist, strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity,
-    appLockEnabled, setAppLockEnabled,
+    appLockEnabled, setAppLockEnabled, appLockIntervalMinutes, setAppLockIntervalMinutes,
     toasts, toast, lineEpoch, theater, setTheater, fs, setFs, clean, setClean]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

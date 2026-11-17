@@ -23,6 +23,8 @@ import { DesktopRail, DesktopTitleBar } from "./components/DesktopChrome";
 import ResizeHandles from "./components/ResizeHandles";
 import { tracePlayback } from "./playbackDiagnostics";
 import { IGrid, IGridF, IHome, IHomeF, ILockF, ISearch, ITv, IUser, IUserF, Logo } from "./icons";
+import { normalizeLastAuthenticatedAt, shouldRequireReauthentication, shouldRequireReauthenticationOnLaunch } from "./appLock";
+import { readStorage, STORAGE_KEYS } from "./storage";
 
 function TabBar() {
   const { tab, setTab, platform } = useStore();
@@ -233,15 +235,17 @@ function MobileShell() {
 
 /* ============ 入口 ============ */
 export default function App() {
-  const { platform, appLockEnabled, loginOpen, setLoginOpen, tab, setTab, stack, pop, fs, setFs } = useStore();
-  const [locked, setLockedState] = useState(() => platform === "ios" && appLockEnabled);
+  const { platform, appLockEnabled, appLockIntervalMinutes, loginOpen, setLoginOpen, tab, setTab, stack, pop, fs, setFs } = useStore();
+  const [locked, setLockedState] = useState(() => platform === "ios" && shouldRequireReauthenticationOnLaunch(appLockEnabled));
   const [unlocking, setUnlocking] = useState(false);
   const [lockError, setLockError] = useState("");
   const [unlockRequest, setUnlockRequest] = useState(0);
   const lockedRef = useRef(locked);
   const lockEnabledRef = useRef(appLockEnabled);
   const authInFlight = useRef(false);
-  const wasBackgrounded = useRef(false);
+  const backgroundedAt = useRef<number | null>(null);
+  const lastAuthenticatedAt = useRef(normalizeLastAuthenticatedAt(readStorage(STORAGE_KEYS.appLockLastAuthenticated)));
+  const previousAppLockEnabled = useRef(appLockEnabled);
   lockEnabledRef.current = appLockEnabled;
   const setLocked = (next: boolean) => {
     lockedRef.current = next;
@@ -258,6 +262,8 @@ export default function App() {
         cancelTitle: "保持锁定",
         fallbackTitle: "使用设备密码",
       });
+      lastAuthenticatedAt.current = Date.now();
+      try { localStorage.setItem(STORAGE_KEYS.appLockLastAuthenticated, String(lastAuthenticatedAt.current)); } catch { /* 下次启动仍按缺失时间要求验证 */ }
       setLocked(false);
     } catch {
       setLockError("验证未完成，请重试或使用设备密码。应用仍保持锁定。");
@@ -267,6 +273,10 @@ export default function App() {
     }
   }, [platform]);
   useEffect(() => {
+    if (appLockEnabled && !previousAppLockEnabled.current) lastAuthenticatedAt.current = Date.now();
+    previousAppLockEnabled.current = appLockEnabled;
+  }, [appLockEnabled]);
+  useEffect(() => {
     if (platform !== "ios" || !appLockEnabled || !locked) return;
     const timer = window.setTimeout(() => { void unlock(); }, 350);
     return () => window.clearTimeout(timer);
@@ -275,13 +285,12 @@ export default function App() {
     if (platform !== "ios") return;
     const onVisibility = () => {
       if (document.visibilityState === "hidden") {
-        wasBackgrounded.current = true;
-        if (lockEnabledRef.current) setLocked(true);
+        if (backgroundedAt.current === null) backgroundedAt.current = Date.now();
         return;
       }
-      if (wasBackgrounded.current) {
-        wasBackgrounded.current = false;
-        if (lockEnabledRef.current) {
+      if (backgroundedAt.current !== null) {
+        backgroundedAt.current = null;
+        if (lockEnabledRef.current && shouldRequireReauthentication(lastAuthenticatedAt.current, Date.now(), appLockIntervalMinutes)) {
           setLocked(true);
           setUnlockRequest((request) => request + 1);
         }
@@ -289,7 +298,7 @@ export default function App() {
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [platform, unlock]);
+  }, [platform, unlock, appLockIntervalMinutes]);
   useEffect(() => {
     tracePlayback("navigation.change", { tab, stack: stack.map(p => ({ page: p.kind, key: p.key })), login_open: loginOpen });
   }, [tab, stack, loginOpen]);
