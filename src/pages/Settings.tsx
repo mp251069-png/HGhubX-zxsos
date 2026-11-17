@@ -271,14 +271,14 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
             </div>
           </Section>
 
-          <Section title="TVBox JSON/API 源">
+          <Section title="TVBox 点播源">
             <div className="space-y-2.5">
               <div className="text-[12px] text-mut leading-relaxed">
-                添加标准 JSON API，或导入 TVBox 单仓/多仓 JSON；多仓将先显示子配置供选择。支持标准 HTTP(S) JSON/API 与后端隔离 QuickJS 有限 HTTP(S) .js/.mjs Spider（需返回直连 HLS/MP4 地址，不是完整 Android/drpy 兼容）；JAR、Python、未知运行器及网页嗅探解析不会执行。
+                导入 TVBox 单仓/多仓配置；支持 XML、标准 JSON API、Remote（type=4）和后端隔离 QuickJS 有限 HTTP(S) .js/.mjs Spider。Remote 会解析 playContent 并将直连 HLS/MP4 交给本应用播放器；JAR、Python、未知运行器及网页嗅探不会执行。
               </div>
               <Input aria-label="TVBox 源名称" value={tvboxName} onChange={event => setTVBoxName(event.target.value)}
                 placeholder="源名称（可选）" className="w-full h-10 rounded-(--r-ctl) bg-s3 px-3 text-[13px] text-on placeholder-dim outline-none" />
-              <Input aria-label="TVBox JSON/API 地址" value={tvboxUrl} onChange={event => {
+              <Input aria-label="TVBox 配置或 API 地址" value={tvboxUrl} onChange={event => {
                 setTVBoxUrl(event.target.value); setTVBoxRepositories([]); setTVBoxRepositoryUrl(""); setTVBoxImportError("");
               }}
                 placeholder="https://example.com/api.php/provide/vod/" inputMode="url" autoCapitalize="none" autoCorrect="off"
@@ -291,7 +291,7 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
               {tvboxRepositories.length > 0 && <div role="group" aria-label="TVBox 子配置列表" className="rounded-(--r-sm) bg-s3 p-3">
                 <div className="text-[13px] font-semibold text-on">选择子配置 · {tvboxRepositories.length} 个</div>
                 <div className="text-[11px] text-dim mt-1 break-all">{tvboxRepositoryUrl}</div>
-                <p className="text-[12px] text-mut mt-2 mb-2">导入所选配置中的标准 API 与受支持的隔离 HTTP(S) JS/MJS Spider；若全是 JAR/Python 等不支持的运行器，将说明原因，不会添加空片库。</p>
+                <p className="text-[12px] text-mut mt-2 mb-2">导入所选配置中的 XML、JSON、Remote API 与受支持的隔离 HTTP(S) JS/MJS Spider；若只含不支持的运行器，会说明原因，不会添加空片库。</p>
                 <div className="max-h-64 overflow-y-auto">
                   {tvboxRepositories.map(repository => <Button key={repository.url} disabled={tvboxImporting}
                     onClick={() => void importTVBoxSource(repository.url, repository.name)}
@@ -309,7 +309,7 @@ export default function Settings({ onBack, wide }: { onBack: () => void; wide: b
                   setActiveTVBoxId(source.id);
                   toast(`已选择 ${source.name}`, "ok");
                 }} className="flex-1 min-w-0 text-left pressable">
-                  <div className="text-[13px] text-on truncate">{source.name}{activeTVBoxId === source.id ? " · 当前" : ""}</div>
+                  <div className="text-[13px] text-on truncate">{source.name}{activeTVBoxId === source.id ? " · 当前" : ""} · {source.kind === "xml" ? "XML" : source.kind === "remote" ? "Remote" : source.kind === "js" ? "Spider" : "JSON"}</div>
                   <div className="text-[11px] text-dim truncate">{source.url}</div>
                 </Button>
                 <Button aria-label={`移除 ${source.name}`} onClick={() => {
