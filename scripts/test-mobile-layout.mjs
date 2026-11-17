@@ -45,7 +45,7 @@ try {
           ] });
           if (url === "https://fixture.invalid/tvbox-spider.json") return Promise.resolve({ sites: [{ name: "仅 Spider", type: 3, api: "csp_fixture_spider" }] });
           if (url === "https://fixture.invalid/tvbox-standard.json") return Promise.resolve({ sites: [{ name: "标准影片 API", type: 1, api: "https://fixture.invalid/api.php/provide/vod/" }] });
-          return Promise.resolve({ code: 1, page: 1, pagecount: 1, total: 1, data: { class: [{ type_id: "1", type_name: "电影" }], list: [{ vod_id: "movie-1", vod_name: "Fixture 影视", vod_year: "2026", vod_play_from: "线路一", vod_play_url: "正片$https://media.fixture.invalid/movie.mp4" }] } });
+          return Promise.resolve({ code: 1, page: Number(new URL(url).searchParams.get("pg") || 1), pagecount: 2, total: 2, data: { class: [{ type_id: "1", type_name: "电影" }], list: [{ vod_id: "movie-1", vod_name: "Fixture 影视", vod_year: "2026", vod_play_from: "线路一", vod_play_url: "正片$https://media.fixture.invalid/movie.mp4" }] } });
         }
         if (cmd === "live_fetch") {
           return Promise.resolve({
@@ -193,7 +193,7 @@ try {
   assert.equal(afterSpiderStorage.active, null, "全 Spider 子仓不得设置活跃源");
   await page.getByRole("group", { name: "TVBox 子配置列表" }).getByRole("button", { name: /标准 API 子仓/ }).click();
   await page.getByRole("heading", { name: "影视" }).waitFor();
-  await page.getByText("Fixture 影视", { exact: true }).waitFor();
+  await page.getByRole("region", { name: "源推荐" }).getByRole("button", { name: "Fixture 影视", exact: true }).waitFor();
   const importedStorage = await page.evaluate(() => ({ sources: JSON.parse(localStorage.getItem("hghubx_tvbox_sources_v1") || "[]"), active: localStorage.getItem("hghubx_tvbox_active_v1") }));
   assert.equal(importedStorage.sources.length, 1, "标准 API 子仓应添加一个源");
   assert.equal(importedStorage.sources[0].url, "https://fixture.invalid/api.php/provide/vod/", "添加的源必须来自标准 API 子仓");
@@ -208,16 +208,51 @@ try {
     window.dispatchEvent(new CustomEvent("hghubx:tvbox-source-changed"));
   });
   await page.getByRole("group", { name: "影视内容来源" }).getByRole("button", { name: "TVBox 源", exact: true }).click();
-  await page.getByText("Fixture 影视", { exact: true }).waitFor();
+  await page.getByRole("region", { name: "源推荐" }).getByRole("button", { name: "Fixture 影视", exact: true }).waitFor();
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: width === 320 ? 694 : 844 });
+    const bounds = await page.evaluate(() => {
+      const source = document.querySelector('[aria-label="TVBox 数据源"]');
+      const page = source?.closest(".ios-page");
+      if (!(page instanceof HTMLElement)) throw new Error("Missing active TVBox page");
+      const rect = (selector) => {
+        const element = page.querySelector(selector);
+        if (!(element instanceof HTMLElement)) throw new Error(`Missing ${selector}`);
+        const { left, right, top, bottom } = element.getBoundingClientRect();
+        return { left, right, top, bottom };
+      };
+      return {
+        source: rect('[aria-label="TVBox 数据源"]'),
+        search: rect("form.ios-search-form"),
+        categoryFiltersVisible: Boolean(page.querySelector('[aria-label="TVBox 影视分类"]')),
+        ranking: rect('[aria-label="TVBox 榜单"]'),
+        firstPoster: rect(".ios-poster-art"),
+        height: innerHeight,
+      };
+    });
+    assert(Math.abs((bounds.source.top + bounds.source.bottom) / 2 - (bounds.search.top + bounds.search.bottom) / 2) < 1,
+      `${width}px source and search share a row: ${JSON.stringify(bounds)}`);
+    assert(bounds.source.right <= bounds.search.left, `${width}px source and search do not overlap`);
+    assert.equal(bounds.categoryFiltersVisible, false, `${width}px TVBox category filter row is removed`);
+    assert(bounds.ranking.left >= 0 && bounds.ranking.right <= width, `${width}px ranking filters stay inside the viewport`);
+    assert(bounds.firstPoster.top < bounds.height - 100, `${width}px first poster remains visible in the opening viewport`);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.getByLabel("TVBox 数据源", { exact: true }).selectOption("fixture-b");
   await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).host === "tv-b.fixture.invalid"));
-  await page.getByRole("button", { name: "电影", exact: true }).click();
-  await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).searchParams.get("t") === "1"));
+  assert.equal(await page.getByRole("group", { name: "TVBox 影视分类" }).count(), 0, "TVBox home has no top category filter row");
+  const categoryListCallsBefore = await page.evaluate(() => window.mobileLayoutFixture.calls.filter(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).searchParams.get("t") === "1" && new URL(call.args.url).searchParams.get("pg") === "1").length);
+  await page.getByRole("region", { name: "电影" }).getByRole("button", { name: "查看全部电影", exact: true }).click();
+  await page.waitForFunction(before => window.mobileLayoutFixture.calls.filter(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).searchParams.get("t") === "1" && new URL(call.args.url).searchParams.get("pg") === "1").length > before, categoryListCallsBefore);
+  await page.getByText("Fixture B · 影视目录 · 点击封面查看详情", { exact: true }).waitFor();
+  const categoryPageCallsBefore = await page.evaluate(() => window.mobileLayoutFixture.calls.filter(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).searchParams.get("t") === "1" && new URL(call.args.url).searchParams.get("pg") === "2").length);
+  await page.getByRole("button", { name: "加载更多", exact: true }).click();
+  await page.waitForFunction(before => window.mobileLayoutFixture.calls.filter(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).searchParams.get("t") === "1" && new URL(call.args.url).searchParams.get("pg") === "2").length > before, categoryPageCallsBefore);
   const tvboxSearch = page.getByRole("textbox", { name: "搜索 TVBox 影片" });
   await tvboxSearch.fill("测试片");
   await tvboxSearch.press("Enter");
   await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).searchParams.get("wd") === "测试片"));
-  report.tvbox_browse = { source_switch: true, category_filter: true, keyword_search: true, catalog_visible: true };
+  report.tvbox_browse = { source_switch: true, category_filter_row_removed: true, view_all_category_id: "1", category_catalog_visible: true, category_pagination: true, keyword_search: true };
 
   // Test APTV / M3U live source management in Settings and playback/filtering/switching in Live mode
   await nav.getByRole("button", { name: "我的", exact: true }).click();

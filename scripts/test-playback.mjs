@@ -158,6 +158,7 @@ async function gestureChecks(page) {
   await page.evaluate(() => window.playerSeekFixture.setFullscreen(true));
   await page.waitForFunction(() => document.querySelector('.player-root')?.classList.contains('fs-immersive'));
   const controlsVisible = () => page.locator('.player-root').evaluate(el => !!el.querySelector('button[aria-label="退出全屏"]'));
+  const timeControlsVisible = () => page.locator('.player-root [data-testid="mobile-fullscreen-controls"]').count();
   await tap();
   await page.waitForTimeout(100);
   assert.equal(await controlsVisible(), true, 'A landscape tap must wake controls, not hide them immediately');
@@ -165,6 +166,8 @@ async function gestureChecks(page) {
   await tap();
   await page.waitForFunction(() => !!document.querySelector('.player-root')?.querySelector('button[aria-label="退出全屏"]'));
   assert.equal(await controlsVisible(), true, 'A tap must reveal controls after the idle timeout');
+  await page.waitForFunction(() => !document.querySelector('.player-root')?.querySelector('[data-testid="mobile-fullscreen-controls"]'), undefined, { timeout: 5000 });
+  assert.equal(await timeControlsVisible(), 0, 'The landscape playback time must hide together with the idle controls');
   const clean = () => page.locator('.player-root').getAttribute('data-clean');
   const start = Date.now();
   await tap();
@@ -179,6 +182,10 @@ async function gestureChecks(page) {
   await tap(); await tap();
   await page.waitForFunction(paused => document.querySelector('video').paused !== paused, wasPaused);
   assert.equal(await clean(), 'false', 'Double tap restores chrome and toggles playback once');
+  await video.evaluate(v => v.pause());
+  await page.waitForFunction(() => !!document.querySelector('.player-root')?.querySelector('[data-testid="mobile-fullscreen-controls"]'));
+  await page.waitForFunction(() => !document.querySelector('.player-root')?.querySelector('[data-testid="mobile-fullscreen-controls"]'), undefined, { timeout: 5000 });
+  assert.equal(await timeControlsVisible(), 0, 'Paused landscape playback must also hide its time after inactivity');
   return {singleTapMs};
 }
 
