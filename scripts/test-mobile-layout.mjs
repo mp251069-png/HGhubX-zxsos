@@ -10,7 +10,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const output = join(root, "test-results", "mobile-layout", new Date().toISOString().replace(/[:.]/g, "-"));
 const userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1";
 const viewports = [{ width: 320, height: 694 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }];
-const tabs = ["首页", "搜索", "影视", "我的"];
+const tabs = ["首页", "搜索", "影视", "直播", "我的"];
 const report = {
   environment: { browser: "Chromium with iPhone UA", transport: "real App; Tauri IPC mocked; no upstream traffic", limitation: "Does not replace native iOS/WKWebView verification", userAgent },
   cases: [], external: [], pageErrors: [],
@@ -59,7 +59,8 @@ try {
             ].join("\n"),
           });
         }
-        if (["api_feed", "api_category", "api_posts", "api_original_videos", "api_post_category", "api_search_hot"].includes(cmd)) return Promise.resolve(emptyPage);
+        if (["api_feed", "api_category", "api_posts", "api_original_videos", "api_post_category", "api_search_hot", "api_search"].includes(cmd)) return Promise.resolve(emptyPage);
+        if (cmd === "api_rank") return Promise.resolve({ items: [] });
         // App's development-only playback self-test must not fetch media upstream.
         if (cmd === "api_play") return Promise.reject("Layout fixture has no playback media");
         fixture.unexpected.push(cmd);
@@ -90,16 +91,21 @@ try {
       await page.waitForFunction(label => document.querySelector('.hg-tabbar button[aria-current="page"]')?.textContent === label, name);
       if (name === "影视") {
         await page.getByRole("heading", { name: "影视" }).waitFor();
-        const topSwitch = page.getByRole("group", { name: "影视与直播模式" });
-        const browseSwitch = page.getByRole("group", { name: "影视浏览模式" });
+        const browseSwitch = page.getByRole("group", { name: "影视内容来源" });
         await browseSwitch.getByRole("button", { name: "TVBox 源", exact: true }).click();
         await page.getByRole("heading", { name: "影视" }).waitFor();
         assert.equal(await page.getByRole("button", { name: "管理 TVBox 源" }).count(), 0, "影视页顶部不得再放资源管理齿轮");
         await page.getByRole("button", { name: "添加或导入 TVBox 源" }).waitFor();
-        await topSwitch.getByRole("button", { name: "直播", exact: true }).click();
+        assert.equal(await page.getByRole("group", { name: "影视与直播模式" }).count(), 0, "Live 不能再嵌在影视切换器中");
+        await nav.getByRole("button", { name: "直播", exact: true }).click();
+        await page.getByRole("heading", { name: "直播", exact: true }).waitFor();
         await page.getByRole("button", { name: "前往设置管理直播源" }).waitFor();
-        await page.getByRole("group", { name: "影视与直播模式" }).getByRole("button", { name: "影视", exact: true }).click();
-        await page.getByRole("group", { name: "影视浏览模式" }).getByRole("button", { name: "HGhubX", exact: true }).click();
+        if (viewport.width === 390 && viewport.height === 844) {
+          await page.screenshot({ path: join(output, "390x844-live-dock-empty.png"), fullPage: true, animations: "disabled" });
+        }
+        await nav.getByRole("button", { name: "影视", exact: true }).click();
+        assert.equal(await browseSwitch.getByRole("button", { name: "TVBox 源", exact: true }).getAttribute("aria-pressed"), "true", "离开 Movies 去 Live 再回来应保留 TVBox 选择");
+        await browseSwitch.getByRole("button", { name: "HGhubX", exact: true }).click();
         await page.getByRole("button", { name: "专题", exact: true }).waitFor();
         await page.screenshot({ path: join(output, `${viewport.width}x${viewport.height}-movies.png`), fullPage: true, animations: "disabled" });
       }
@@ -123,6 +129,41 @@ try {
     await page.screenshot({ path: join(output, result.screenshot), fullPage: true });
   }
   await page.setViewportSize({ width: 390, height: 844 });
+  await nav.getByRole("button", { name: "首页", exact: true }).click();
+  await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "api_feed"));
+  const feedCalls = await page.evaluate(() => window.mobileLayoutFixture.calls.filter(call => call.cmd === "api_feed").length);
+  await page.evaluate(() => window.dispatchEvent(new Event("hg:line-changed")));
+  await page.waitForFunction(before => window.mobileLayoutFixture.calls.filter(call => call.cmd === "api_feed").length > before, feedCalls);
+  report.line_switch_home = { cleared_and_reloaded_from_page_1: true };
+
+  await nav.getByRole("button", { name: "搜索", exact: true }).click();
+  await page.getByRole("region", { name: "热搜榜" }).waitFor();
+  await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "api_search_hot"));
+  const hotCalls = await page.evaluate(() => window.mobileLayoutFixture.calls.filter(call => call.cmd === "api_search_hot").length);
+  await page.evaluate(() => window.dispatchEvent(new Event("hg:line-changed")));
+  await page.waitForFunction(before => window.mobileLayoutFixture.calls.filter(call => call.cmd === "api_search_hot").length > before, hotCalls);
+
+  const searchInput = page.getByPlaceholder("搜索短剧、帖子、题材…");
+  await searchInput.fill("切线测试");
+  await searchInput.press("Enter");
+  await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "api_search"));
+  const searchCalls = await page.evaluate(() => window.mobileLayoutFixture.calls.filter(call => call.cmd === "api_search").length);
+  await page.evaluate(() => window.dispatchEvent(new Event("hg:line-changed")));
+  await page.waitForFunction(before => window.mobileLayoutFixture.calls.filter(call => call.cmd === "api_search").length > before, searchCalls);
+
+  await page.getByRole("button", { name: "排行榜" }).click();
+  await page.getByText("HG 热榜", { exact: true }).waitFor();
+  await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "api_rank"));
+  const rankCalls = await page.evaluate(() => window.mobileLayoutFixture.calls.filter(call => call.cmd === "api_rank").length);
+  await page.evaluate(() => window.dispatchEvent(new Event("hg:line-changed")));
+  await page.waitForFunction(before => window.mobileLayoutFixture.calls.filter(call => call.cmd === "api_rank").length > before, rankCalls);
+  report.line_switch_search = { hot_list: true, keyword_results: true, full_ranks: true };
+  await page.getByRole("button", { name: "返回" }).click();
+  const homeCallsBeforeReturn = await page.evaluate(() => window.mobileLayoutFixture.calls.filter(call => call.cmd === "api_feed").length);
+  await nav.getByRole("button", { name: "首页", exact: true }).click();
+  await page.waitForFunction(before => window.mobileLayoutFixture.calls.filter(call => call.cmd === "api_feed").length > before, homeCallsBeforeReturn);
+  report.line_switch_home.hidden_tab_reload = true;
+
   await page.evaluate(() => {
     localStorage.removeItem("hghubx_tvbox_sources_v1");
     localStorage.removeItem("hghubx_tvbox_active_v1");
@@ -132,7 +173,7 @@ try {
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("heading", { name: "设置" }).waitFor();
   const rootFixtureUrl = "https://fixture.invalid/tvbox-root.json";
-  const tvboxUrlInput = page.getByRole("textbox", { name: "TVBox JSON/API 地址" });
+  const tvboxUrlInput = page.getByRole("textbox", { name: "TVBox 配置或 API 地址" });
   await tvboxUrlInput.fill(rootFixtureUrl);
   await page.getByRole("button", { name: "验证并添加", exact: true }).click();
   const repositories = page.getByRole("group", { name: "TVBox 子配置列表" });
@@ -145,7 +186,7 @@ try {
   await repositories.getByRole("button", { name: /全 Spider 子仓/ }).click();
   const spiderAlert = page.getByRole("alert");
   await spiderAlert.waitFor();
-  assert.match(await spiderAlert.innerText(), /Spider|脚本|标准 JSON API/, "全 Spider 子仓必须显示具体错误");
+  assert.match(await spiderAlert.innerText(), /XML\/JSON\/Remote API|catvod JS|运行器/, "全 Spider 子仓必须说明不可支持的运行器");
   assert.equal(await page.getByRole("group", { name: "TVBox 子配置列表" }).count(), 1, "Spider 错误后不得关闭子配置列表");
   const afterSpiderStorage = await page.evaluate(() => ({ sources: localStorage.getItem("hghubx_tvbox_sources_v1"), active: localStorage.getItem("hghubx_tvbox_active_v1") }));
   assert.equal(afterSpiderStorage.sources, null, "全 Spider 子仓不得添加源");
@@ -166,7 +207,7 @@ try {
     localStorage.setItem("hghubx_tvbox_active_v1", "fixture-a");
     window.dispatchEvent(new CustomEvent("hghubx:tvbox-source-changed"));
   });
-  await page.getByRole("group", { name: "影视浏览模式" }).getByRole("button", { name: "TVBox 源", exact: true }).click();
+  await page.getByRole("group", { name: "影视内容来源" }).getByRole("button", { name: "TVBox 源", exact: true }).click();
   await page.getByText("Fixture 影视", { exact: true }).waitFor();
   await page.getByLabel("TVBox 数据源").selectOption("fixture-b");
   await page.waitForFunction(() => window.mobileLayoutFixture.calls.some(call => call.cmd === "tvbox_fetch" && new URL(call.args.url).host === "tv-b.fixture.invalid"));
@@ -184,6 +225,7 @@ try {
   await page.getByRole("heading", { name: "设置" }).waitFor();
   await page.getByRole("textbox", { name: "M3U 订阅链接" }).fill("https://fixture.invalid/live.m3u8");
   await page.getByRole("button", { name: "导入 M3U 订阅", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.hg-tabbar button[aria-current="page"]')?.textContent === "直播");
   await page.getByTestId("live-player").waitFor();
   await page.getByRole("list", { name: "直播频道列表" }).waitFor();
   await page.screenshot({ path: join(output, "390x844-live-channels-fixture.png"), fullPage: true, animations: "disabled" });

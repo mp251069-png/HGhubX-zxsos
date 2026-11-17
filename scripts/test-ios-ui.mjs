@@ -116,7 +116,7 @@ try {
         return size >= minimum;
       }, test.minimumFontSize), "Chromium applies the enlarged minimum text size");
       const nav = page.getByRole("navigation", { name: "主导航" });
-      for (const label of ["首页", "搜索", "影视", "我的"]) await nav.getByRole("button", { name: label, exact: true }).waitFor();
+      for (const label of ["首页", "搜索", "影视", "直播", "我的"]) await nav.getByRole("button", { name: label, exact: true }).waitFor();
       await page.waitForFunction(theme => document.documentElement.dataset.theme === theme, test.theme);
       if (test.android) await page.waitForFunction(() => window.__IOS_UI_FIXTURE__.hasHardwareBack());
       check("original navigation and persisted appearance");
